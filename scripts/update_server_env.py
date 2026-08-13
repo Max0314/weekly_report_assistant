@@ -42,7 +42,8 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Update approved weekly assistant runtime settings from stdin JSON.")
     parser.add_argument("--env-file", default=".env")
     args = parser.parse_args()
-    payload = json.load(sys.stdin)
+    # Windows PowerShell may prefix piped UTF-8 text with a BOM.
+    payload = json.loads(sys.stdin.buffer.read().decode("utf-8-sig"))
     if not isinstance(payload, dict):
         raise SystemExit("stdin JSON must be an object")
     unknown = sorted(set(payload) - ALLOWED_KEYS)
