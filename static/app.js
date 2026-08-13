@@ -34,8 +34,9 @@
     const c = data.checks;
     $("#readiness").innerHTML = [
       checkCard("钉钉应用", c.dingtalkApp), checkCard("AI 多维表", c.aiTable),
+      checkCard("源表快照", c.sourceData?.ready, c.sourceData?.reason || "最近同步成功"),
       checkCard("bi_center 人员", c.biCenter, `${c.directoryCache.count || 0} 人`),
-      checkCard("AI 摘要", c.aiSummary), checkCard("公开图片链接", c.publicLinks),
+      checkCard("AI 摘要", c.aiSummary, c.aiSummaryDetail?.ok ? "连接测试通过" : (c.aiSummaryDetail?.error || (c.aiSummaryDetail?.configured ? "连接测试未通过" : "未配置"))), checkCard("公开图片链接", c.publicLinks),
       checkCard("回调鉴权", c.callbackAuth),
       checkCard("推送目标", c.deliveryTargets?.ready, `预览 ${c.deliveryTargets?.preview || 0} / 正式 ${c.deliveryTargets?.formal || 0}`),
       checkCard("周报归档", c.archive?.ready, c.archive?.enabled ? `已启用 · ${c.archive?.mappedFields || 0} 个字段` : "未启用（可选）"),
@@ -105,6 +106,11 @@
     $("#modelEffectiveName").textContent = effective.modelName || "未配置";
     $("#modelKeyStatus").textContent = effective.hasApiKey ? `已配置 · ${effective.apiKeyMasked || "已脱敏"}` : "未配置";
     $("#resetModelConfig").disabled = !modelConfig.override;
+    const lastTest = modelConfig.lastTest || {};
+    if (lastTest.tested) {
+      $("#modelFeedback").className = `model-feedback ${lastTest.ok ? "ok-text" : "warn"}`;
+      $("#modelFeedback").textContent = lastTest.ok ? `最近连接测试通过 · ${lastTest.testedAt || ""}` : `最近连接测试失败 · ${lastTest.error || "未知错误"}`;
+    }
     renderModelOptions();
   };
   const loadModelConfig = async () => applyModelConfig(await api("/api/model-config"));

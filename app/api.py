@@ -20,6 +20,7 @@ from .services.reports import REPORT_KINDS, report_service
 from .services.robot_commands import robot_command_service
 from .services.scheduler import scheduler_service
 from .services.workflow_config import workflow_config_service
+from .time_utils import now_local
 
 
 router = APIRouter()
@@ -103,10 +104,16 @@ def readiness(_: str = Depends(_admin_token)) -> dict[str, Any]:
             and {"archiveKey", "title", "periodKey"}.issubset(config.get("archiveFieldMap") or {})
         )
     )
+    source_ready, source_reason = scheduler_service._source_snapshot_ready(
+        now_local(), freshness_hours=int(config.get("sourceFreshnessHours") or 26)
+    )
+    model_test = model_config_service.test_status()
+    ai_summary_ready = bool(model_config_service.configured() and model_test.get("ok"))
     return {
         "ready": bool(
             settings.aitable_configured
             and settings.bi_center_configured
+            and source_ready
             and callback_auth
             and delivery_ready
             and archive_ready
@@ -116,7 +123,12 @@ def readiness(_: str = Depends(_admin_token)) -> dict[str, Any]:
             "dingtalkApp": settings.dingtalk_configured,
             "aiTable": settings.aitable_configured,
             "biCenter": settings.bi_center_configured,
-            "aiSummary": model_config_service.configured(),
+            "aiSummary": ai_summary_ready,
+            "aiSummaryDetail": {
+                "configured": model_config_service.configured(),
+                **model_test,
+            },
+            "sourceData": {"ready": source_ready, "reason": source_reason},
             "publicLinks": public_links,
             "callbackAuth": callback_auth,
             "deliveryTargets": {

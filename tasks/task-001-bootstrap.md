@@ -1,6 +1,6 @@
 # task-001：独立周报助手初始化
 
-- 状态：已部署，待正式凭证与业务联调
+- 状态：已部署并完成部分业务联调，待 AI 表权限与模型区域问题处理
 - 工作目录：`D:\code_CPL\weekly_report_assistant`
 - 交付分支：`main`（新仓库初始实现）
 - GitHub：`git@github.com:Max0314/weekly_report_assistant.git`
@@ -24,13 +24,11 @@
 
 ## 待正式环境验收
 
-- 轮换并配置钉钉应用 Client Secret；聊天中已暴露的旧 Secret 不得上线。
-- 配置 AI 表 operatorId 与开放平台读取/记录新增权限。
-- 为本服务签发 bi_center 独立只读 Token；当前未复用已有 2 个 Token。
-- 预览/正式群和审核人配置。
-- HTTPS 回调和图片访问。
+- 开通 AI 表权限 `Notable.Base.Read.All`；启用归档时再增加记录新增权限。
+- 处理 NeoFlow 中国服务器访问 OpenRouter `openai/gpt-5.4-mini` 的区域限制，或由负责人选择可用模型/合规代理。
+- 在钉钉开放平台保存完整 HTTPS 回调地址并完成真实回调事件验证。
 - 周报存档表 fieldId 映射与记录新增权限。
-- 配置 AI 模型后验证智能摘要；未配置时仅使用确定性兜底模板。
+- 完成源表同步、事实核验和个人预览后，再决定是否启用调度器。
 
 ## 已完成部署验证
 

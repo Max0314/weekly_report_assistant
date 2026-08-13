@@ -6,9 +6,11 @@ from typing import Any
 from ..config import Settings, settings
 from ..db import Database, db
 from ..integrations.http_json import JsonHttpError, request_json
+from ..time_utils import now_local, to_db
 
 
 CONFIG_KEY = "ai_model"
+TEST_CONFIG_KEY = "ai_model_test"
 PROVIDERS = [
     {
         "value": "openai",
@@ -164,6 +166,39 @@ class ModelConfigService:
         return bool(config.get("apiBase") and config.get("model") and config.get("apiKey"))
 
     @staticmethod
+    def _identity(config: dict[str, Any]) -> str:
+        return "|".join(
+            (
+                _text(config.get("provider")),
+                _normalize_api_base(config.get("apiBase")),
+                _text(config.get("model") or config.get("modelName")),
+            )
+        )
+
+    def _record_test(self, config: dict[str, Any], *, ok: bool, error: str = "") -> None:
+        self.db.save_config(
+            TEST_CONFIG_KEY,
+            {
+                "identity": self._identity(config),
+                "ok": bool(ok),
+                "error": _text(error)[:1000],
+                "testedAt": to_db(now_local()),
+            },
+            actor="model-test",
+        )
+
+    def test_status(self) -> dict[str, Any]:
+        payload = self.db.load_config(TEST_CONFIG_KEY, {})
+        matches = _text(payload.get("identity")) == self._identity(self.effective())
+        tested = bool(matches and payload.get("testedAt"))
+        return {
+            "tested": tested,
+            "ok": bool(tested and payload.get("ok")),
+            "error": _text(payload.get("error")) if tested else "",
+            "testedAt": _text(payload.get("testedAt")) if tested else "",
+        }
+
+    @staticmethod
     def _public(config: dict[str, Any], *, source: str) -> dict[str, Any]:
         return {
             "source": source,
@@ -186,6 +221,7 @@ class ModelConfigService:
             ),
             "inherited": self._public(inherited, source="bi_center_deployment"),
             "override": self._public(override, source="weekly_assistant") if override else None,
+            "lastTest": self.test_status(),
             "compatibility": {
                 "qwen": "Qwen 使用 max_tokens，并自动关闭 enable_thinking。",
                 "openrouter": "OpenRouter GPT-5.4/GLM 结构化任务关闭额外 reasoning。",
@@ -243,9 +279,12 @@ class ModelConfigService:
                 timeout=max(self.settings.http_timeout_seconds, 60),
             )
         except JsonHttpError as exc:
+            self._record_test(config, ok=False, error=str(exc))
             raise ModelConfigError(str(exc)) from exc
         if not isinstance(response, dict) or not isinstance(response.get("choices"), list):
+            self._record_test(config, ok=False, error="模型返回格式不正确")
             raise ModelConfigError("模型返回格式不正确")
+        self._record_test(config, ok=True)
         return {
             "ok": True,
             "provider": config["provider"],

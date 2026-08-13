@@ -68,6 +68,28 @@ class ModelConfigTests(unittest.TestCase):
         self.assertNotIn("temperature", sent)
         self.assertNotIn("apiKey", result)
         self.assertTrue(result["ok"])
+        self.assertTrue(self.service.test_status()["ok"])
+
+    def test_failed_connection_is_persisted_without_the_api_key(self) -> None:
+        from app.integrations.http_json import JsonHttpError
+
+        with patch(
+            "app.services.model_config.request_json",
+            side_effect=JsonHttpError("HTTP 403: region unavailable"),
+        ):
+            with self.assertRaisesRegex(Exception, "region unavailable"):
+                self.service.test(
+                    {
+                        "provider": "openrouter",
+                        "apiBase": "https://openrouter.ai/api/v1",
+                        "modelName": "openai/gpt-5.4-mini",
+                        "apiKey": "",
+                    }
+                )
+        status = self.service.test_status()
+        self.assertTrue(status["tested"])
+        self.assertFalse(status["ok"])
+        self.assertNotIn("shared-production-secret", str(status))
 
 
 if __name__ == "__main__":

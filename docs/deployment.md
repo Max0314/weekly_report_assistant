@@ -77,7 +77,7 @@ https://neoflow-cn.neo-net.com/weekly-assistant/api/dingtalk/robot/callback?toke
 ## 健康与诊断
 
 - `/api/health` 仅检查服务与 SQLite。
-- `/api/readiness` 需要管理令牌，显示钉钉、AI 表、bi_center、回调鉴权、公开链接、个人/群目标、归档配置和人员缓存状态，不返回密钥。
+- `/api/readiness` 需要管理令牌，显示钉钉、AI 表、最近源表快照、bi_center、最近模型连接测试、回调鉴权、公开链接、个人/群目标、归档配置和人员缓存状态，不返回密钥。应用配置齐全但源表最近同步失败或过期时，总体状态仍为未就绪。
 - `/api/model-config` 需要管理令牌，返回当前模型、来源与脱敏 Key；连接测试可使用未保存候选配置，留空 Key 时安全复用当前生效 Key。
 - `/api/coverage` 显示预期产品/项目经理与本周有效事项覆盖；`POST /api/coverage/remind` 仅在管理员确认后发送一次性缺报单聊。
 - `sync_run` 保存逐表同步结果；最新同步失败或超过 `sourceFreshnessHours` 时，自动生成和自动预览会被阻断。

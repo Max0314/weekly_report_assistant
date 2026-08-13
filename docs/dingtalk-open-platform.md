@@ -25,6 +25,8 @@ v1 可以复用现有企业内部应用，前提是该应用允许增加 AI 多�
 - `/v1.0/notable/bases/{baseId}/sheets/{sheetId}/records/list`：AI 表记录只读。
 - `/v1.0/notable/bases/{baseId}/sheets/{sheetId}/records`：新增周报存档记录；仅启用归档回写时申请。
 
+当前生产联调已确认应用缺少 `Notable.Base.Read.All`；开放平台返回的申请入口为 `https://open-dev.dingtalk.com/appscope/apply?content=dingngjpfpyafhwirtfn%23Notable.Base.Read.All`。开通并发布新权限版本后，需要重新执行“同步 AI 表”验证，不需要更换 Client Secret。
+
 人员和组织数据由 `bi_center` 的只读 Token 提供；按当前部署决策复用一个已有 Token，不会获得写权限，本应用也不需要再申请钉钉通讯录读取权限。应用可见范围至少包含个人接收人和审核人；AI 表操作人还必须在目标 Base 的协作者/高级权限中具有对应表的读取权限。
 
 ## 尚需确认的参数
