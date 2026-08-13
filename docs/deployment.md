@@ -37,6 +37,15 @@ location = /weekly-assistant/api/dingtalk/robot/callback {
     proxy_set_header X-Forwarded-Prefix /weekly-assistant;
 }
 
+location ^~ /weekly-assistant/static/ {
+    proxy_pass http://127.0.0.1:39022/weekly-assistant/static/;
+    proxy_http_version 1.1;
+    proxy_set_header Host $host;
+    proxy_set_header X-Forwarded-Proto $scheme;
+    proxy_set_header X-Forwarded-Prefix /weekly-assistant;
+    expires 5m;
+}
+
 location /weekly-assistant/ {
     proxy_pass http://127.0.0.1:39022;
     proxy_http_version 1.1;

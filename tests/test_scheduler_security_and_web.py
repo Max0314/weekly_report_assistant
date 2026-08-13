@@ -112,6 +112,9 @@ class SchedulerSecurityAndWebTests(unittest.TestCase):
         self.assertIn("resolveUrl(path)", script)
         self.assertIn("proxy_pass http://127.0.0.1:39022;", nginx)
         self.assertNotIn("proxy_pass http://127.0.0.1:39022/;", nginx)
+        self.assertIn(
+            "proxy_pass http://127.0.0.1:39022/weekly-assistant/static/;", nginx
+        )
 
 
 if __name__ == "__main__":
