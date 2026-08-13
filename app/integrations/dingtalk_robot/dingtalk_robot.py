@@ -25,6 +25,34 @@ def _response_error(payload: dict[str, Any]) -> str:
     return ""
 
 
+def _recall_result(payload: dict[str, Any], requested_keys: list[str]) -> dict[str, Any]:
+    error = _response_error(payload)
+    success_result = payload.get("successResult")
+    successful = (
+        {_text(item) for item in success_result if _text(item)}
+        if isinstance(success_result, list)
+        else set()
+    )
+    failed_result = payload.get("failedResult")
+    failed = failed_result if isinstance(failed_result, dict) else {}
+    missing = [key for key in requested_keys if key not in successful and key not in failed]
+    if not error and failed:
+        error = "; ".join(
+            f"{key}: {_text(value) or 'recall failed'}" for key, value in failed.items()
+        )
+    if not error and success_result is None:
+        error = "DingTalk recall response did not contain successResult"
+    if not error and missing:
+        error = f"DingTalk did not confirm recall for: {', '.join(missing)}"
+    return {
+        "recalled": not bool(error),
+        "error": error,
+        "successResult": list(successful),
+        "failedResult": failed,
+        "raw": payload,
+    }
+
+
 class DingTalkRobotClient:
     def __init__(self, config: Settings | None = None) -> None:
         self.settings = config or settings
@@ -173,8 +201,7 @@ class DingTalkRobotClient:
             )
         except DingTalkRobotError as exc:
             return {"recalled": False, "error": str(exc)}
-        error = _response_error(response)
-        return {"recalled": not bool(error), "error": error, "raw": response}
+        return _recall_result(response, normalized)
 
     def recall_private(
         self,
@@ -191,13 +218,12 @@ class DingTalkRobotClient:
             return {"recalled": False, "error": "processQueryKey missing"}
         try:
             response = self._post(
-                "/v1.0/robot/oToMessages/recall",
+                "/v1.0/robot/otoMessages/batchRecall",
                 {"robotCode": code, "processQueryKeys": normalized},
             )
         except DingTalkRobotError as exc:
             return {"recalled": False, "error": str(exc)}
-        error = _response_error(response)
-        return {"recalled": not bool(error), "error": error, "raw": response}
+        return _recall_result(response, normalized)
 
 
 def sender_id_from_payload(payload: dict[str, Any]) -> str:
