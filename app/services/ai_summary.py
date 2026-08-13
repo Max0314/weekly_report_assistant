@@ -5,6 +5,7 @@ from typing import Any
 
 from ..config import Settings, settings
 from ..integrations.http_json import JsonHttpError, request_json
+from .model_config import ModelConfigService, build_chat_payload, model_config_service
 
 
 SECTION_KEYS = (
@@ -42,8 +43,25 @@ def _extract_json(text: str) -> dict[str, Any]:
 
 
 class AISummaryClient:
-    def __init__(self, config: Settings | None = None) -> None:
+    def __init__(
+        self,
+        config: Settings | None = None,
+        model_service: ModelConfigService | None = None,
+    ) -> None:
         self.settings = config or settings
+        self.model_service = model_service if model_service is not None else (
+            None if config is not None else model_config_service
+        )
+
+    def _model_config(self) -> dict[str, str]:
+        if self.model_service is not None:
+            return self.model_service.effective()
+        return {
+            "provider": self.settings.ai_provider.strip(),
+            "apiBase": self.settings.ai_base_url.strip().rstrip("/"),
+            "apiKey": self.settings.ai_api_key.strip(),
+            "model": self.settings.ai_model.strip(),
+        }
 
     def summarize(
         self,
@@ -53,7 +71,8 @@ class AISummaryClient:
         items: list[dict[str, Any]],
         fallback: dict[str, str],
     ) -> dict[str, str]:
-        if not self.settings.ai_configured:
+        model_config = self._model_config()
+        if not all(model_config.get(key) for key in ("apiBase", "apiKey", "model")):
             raise AISummaryError("AI model is not configured")
         limit = self.settings.ai_max_items
         text_limit = self.settings.ai_max_text_chars
@@ -107,25 +126,26 @@ class AISummaryClient:
                 "不评价个人绩效，不生成排名",
             ],
         }
-        url = self.settings.ai_base_url.rstrip("/")
+        url = model_config["apiBase"].rstrip("/")
         if not url.endswith("/chat/completions"):
             url = f"{url}/chat/completions"
         try:
             response = request_json(
                 url,
                 method="POST",
-                headers={"Authorization": f"Bearer {self.settings.ai_api_key}"},
-                payload={
-                    "model": self.settings.ai_model,
-                    "temperature": 0.2,
-                    "messages": [
+                headers={"Authorization": f"Bearer {model_config['apiKey']}"},
+                payload=build_chat_payload(
+                    model_config,
+                    messages=[
                         {
                             "role": "system",
                             "content": "你是企业周报编辑器。严格依据输入事实，返回约定 JSON。",
                         },
                         {"role": "user", "content": json.dumps(prompt, ensure_ascii=False)},
                     ],
-                },
+                    max_tokens=1800,
+                    temperature=0.2,
+                ),
                 timeout=max(self.settings.http_timeout_seconds, 60),
             )
         except JsonHttpError as exc:

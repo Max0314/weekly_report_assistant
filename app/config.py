@@ -38,6 +38,7 @@ class Settings(BaseSettings):
     ai_base_url: str = ""
     ai_api_key: str = ""
     ai_model: str = ""
+    ai_provider: str = ""
     ai_include_person_names: bool = False
     ai_max_items: int = Field(default=120, ge=10, le=500)
     ai_max_text_chars: int = Field(default=600, ge=100, le=4000)

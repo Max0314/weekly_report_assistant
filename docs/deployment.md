@@ -2,7 +2,7 @@
 
 ## 首次部署
 
-1. 从 `.env.example` 创建服务器本地 `.env`，通过密钥管理或人工安全输入补齐；不得复制聊天中已暴露的旧 Secret。
+1. 从 `.env.example` 创建服务器本地 `.env`，通过密钥管理、服务器到服务器传输或人工安全输入补齐；不得把 Secret 写入 Git、部署日志或命令输出。本次生产部署按负责人决定复用现有钉钉应用 Secret。
 2. 子路径部署设置：
 
    ```text
@@ -78,6 +78,7 @@ https://neoflow-cn.neo-net.com/weekly-assistant/api/dingtalk/robot/callback?toke
 
 - `/api/health` 仅检查服务与 SQLite。
 - `/api/readiness` 需要管理令牌，显示钉钉、AI 表、bi_center、回调鉴权、公开链接、个人/群目标、归档配置和人员缓存状态，不返回密钥。
+- `/api/model-config` 需要管理令牌，返回当前模型、来源与脱敏 Key；连接测试可使用未保存候选配置，留空 Key 时安全复用当前生效 Key。
 - `/api/coverage` 显示预期产品/项目经理与本周有效事项覆盖；`POST /api/coverage/remind` 仅在管理员确认后发送一次性缺报单聊。
 - `sync_run` 保存逐表同步结果；最新同步失败或超过 `sourceFreshnessHours` 时，自动生成和自动预览会被阻断。
 - `job_status` 保存调度失败及重试次数；机器人事件和推送日志只在管理接口可见。

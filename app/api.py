@@ -14,6 +14,7 @@ from .services.collector import source_collector
 from .services.archive import archive_service
 from .services.delivery import delivery_service
 from .services.directory import directory_service
+from .services.model_config import ModelConfigError, model_config_service
 from .services.rendering import report_html, report_renderer
 from .services.reports import REPORT_KINDS, report_service
 from .services.robot_commands import robot_command_service
@@ -40,6 +41,13 @@ class ReasonBody(BaseModel):
 
 class ConfigBody(BaseModel):
     config: dict[str, Any]
+
+
+class ModelConfigBody(BaseModel):
+    provider: str = ""
+    apiBase: str = ""
+    modelName: str = ""
+    apiKey: str = ""
 
 
 class CoverageBody(BaseModel):
@@ -108,7 +116,7 @@ def readiness(_: str = Depends(_admin_token)) -> dict[str, Any]:
             "dingtalkApp": settings.dingtalk_configured,
             "aiTable": settings.aitable_configured,
             "biCenter": settings.bi_center_configured,
-            "aiSummary": settings.ai_configured,
+            "aiSummary": model_config_service.configured(),
             "publicLinks": public_links,
             "callbackAuth": callback_auth,
             "deliveryTargets": {
@@ -160,6 +168,32 @@ def get_config(_: str = Depends(_admin_token)) -> dict[str, Any]:
 @router.put("/api/config")
 def update_config(body: ConfigBody, actor: str = Depends(_admin_token)) -> dict[str, Any]:
     return {"config": workflow_config_service.update(body.config, actor=actor)}
+
+
+@router.get("/api/model-config")
+def get_model_config(_: str = Depends(_admin_token)) -> dict[str, Any]:
+    return model_config_service.get()
+
+
+@router.put("/api/model-config")
+def update_model_config(body: ModelConfigBody, actor: str = Depends(_admin_token)) -> dict[str, Any]:
+    try:
+        return model_config_service.update(body.model_dump(), actor=actor)
+    except ModelConfigError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.delete("/api/model-config")
+def reset_model_config(_: str = Depends(_admin_token)) -> dict[str, Any]:
+    return model_config_service.reset()
+
+
+@router.post("/api/model-config/test")
+def test_model_config(body: ModelConfigBody, _: str = Depends(_admin_token)) -> dict[str, Any]:
+    try:
+        return model_config_service.test(body.model_dump())
+    except ModelConfigError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @router.post("/api/sync/source")

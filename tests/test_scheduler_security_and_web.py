@@ -110,6 +110,11 @@ class SchedulerSecurityAndWebTests(unittest.TestCase):
         self.assertNotIn('href="/static/', html)
         self.assertNotIn('src="/static/', html)
         self.assertIn("resolveUrl(path)", script)
+        self.assertIn('id="modelProvider"', html)
+        self.assertIn('api("/api/model-config"', script)
+        self.assertIn('api("/api/model-config/test"', script)
+        self.assertIn("styles.css?v=20260813f", html)
+        self.assertIn("app.js?v=20260813f", html)
         self.assertIn("proxy_pass http://127.0.0.1:39022;", nginx)
         self.assertNotIn("proxy_pass http://127.0.0.1:39022/;", nginx)
         self.assertIn(

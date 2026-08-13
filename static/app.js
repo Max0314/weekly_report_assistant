@@ -5,6 +5,7 @@
   const logBox = $("#log");
   const busy = $("#busy");
   const appBaseUrl = new URL("./", window.location.href);
+  let modelConfig = null;
   tokenInput.value = localStorage.getItem("weeklyReportAdminToken") || "";
 
   const resolveUrl = (path) => new URL(String(path || "").replace(/^\//, ""), appBaseUrl).toString();
@@ -84,6 +85,56 @@
     $("#archiveFieldMap").value = JSON.stringify(data.config.archiveFieldMap || {}, null, 2);
   };
 
+  const modelProviderMeta = (value) => (modelConfig?.providers || []).find((item) => item.value === value) || {};
+  const renderModelOptions = () => {
+    const meta = modelProviderMeta($("#modelProvider").value);
+    const values = Array.from(new Set([$("#modelName").value, ...(meta.defaultModels || [])].filter(Boolean)));
+    $("#modelNameOptions").innerHTML = values.map((value) => `<option value="${escapeHtml(value)}"></option>`).join("");
+  };
+  const applyModelConfig = (data) => {
+    modelConfig = data || {};
+    const effective = modelConfig.effective || {};
+    const providers = modelConfig.providers || [];
+    $("#modelProvider").innerHTML = providers.map((item) => `<option value="${escapeHtml(item.value)}">${escapeHtml(item.label)}</option>`).join("");
+    $("#modelProvider").value = effective.provider || "compatible";
+    $("#modelApiBase").value = effective.apiBase || "";
+    $("#modelName").value = effective.modelName || "";
+    $("#modelApiKey").value = "";
+    $("#modelApiKey").placeholder = effective.apiKeyMasked ? `留空保留 ${effective.apiKeyMasked}` : "请输入 API Key";
+    $("#modelSource").textContent = effective.source === "weekly_assistant" ? "周报助手自定义" : "沿用 bi_center 部署配置";
+    $("#modelEffectiveName").textContent = effective.modelName || "未配置";
+    $("#modelKeyStatus").textContent = effective.hasApiKey ? `已配置 · ${effective.apiKeyMasked || "已脱敏"}` : "未配置";
+    $("#resetModelConfig").disabled = !modelConfig.override;
+    renderModelOptions();
+  };
+  const loadModelConfig = async () => applyModelConfig(await api("/api/model-config"));
+  const modelPayload = () => ({
+    provider: $("#modelProvider").value,
+    apiBase: $("#modelApiBase").value.trim(),
+    modelName: $("#modelName").value.trim(),
+    apiKey: $("#modelApiKey").value.trim(),
+  });
+  const modelAction = async (label, callback) => {
+    busy.textContent = `${label}处理中…`;
+    $("#modelFeedback").className = "model-feedback muted";
+    $("#modelFeedback").textContent = `${label}处理中…`;
+    try {
+      const data = await callback();
+      $("#modelFeedback").className = "model-feedback ok-text";
+      $("#modelFeedback").textContent = data.message || `${label}成功`;
+      log(`${label}成功`, data);
+      await loadReadiness();
+      return data;
+    } catch (error) {
+      $("#modelFeedback").className = "model-feedback warn";
+      $("#modelFeedback").textContent = error.message;
+      log(`${label}失败`, error.message);
+      return null;
+    } finally {
+      busy.textContent = "";
+    }
+  };
+
   const searchRecipients = async () => {
     const query = $("#recipientSearch").value.trim();
     const data = await api(`/api/directory?query=${encodeURIComponent(query)}&limit=100`);
@@ -93,7 +144,7 @@
 
   const refresh = async () => {
     busy.textContent = "读取中…";
-    try { await Promise.all([loadReadiness(), loadReports(), loadConfig(), loadCoverage(), loadEvents()]); }
+    try { await Promise.all([loadReadiness(), loadReports(), loadConfig(), loadModelConfig(), loadCoverage(), loadEvents()]); }
     catch (error) { log("刷新失败", error.message); }
     finally { busy.textContent = ""; }
   };
@@ -115,6 +166,23 @@
     }));
   });
   $("#refreshEvents").addEventListener("click", () => run("刷新机器人事件", loadEvents));
+  $("#modelProvider").addEventListener("change", () => {
+    const meta = modelProviderMeta($("#modelProvider").value);
+    $("#modelApiBase").value = meta.defaultApiBase || "";
+    $("#modelName").value = meta.defaultModel || "";
+    renderModelOptions();
+  });
+  $("#modelName").addEventListener("input", renderModelOptions);
+  $("#testModelConfig").addEventListener("click", () => modelAction("模型连接测试", () => api("/api/model-config/test", {method:"POST", body:JSON.stringify(modelPayload())})));
+  $("#saveModelConfig").addEventListener("click", async () => {
+    const data = await modelAction("保存模型配置", () => api("/api/model-config", {method:"PUT", body:JSON.stringify(modelPayload())}));
+    if (data) applyModelConfig(data);
+  });
+  $("#resetModelConfig").addEventListener("click", async () => {
+    if (!window.confirm("确认恢复沿用部署环境中同步自 bi_center 的模型配置？")) return;
+    const data = await modelAction("恢复模型配置", () => api("/api/model-config", {method:"DELETE"}));
+    if (data) applyModelConfig(data);
+  });
   $("#searchRecipient").addEventListener("click", () => run("搜索个人接收人", searchRecipients));
   $("#applyPersonalTarget").addEventListener("click", () => {
     const option = $("#recipientSelect").selectedOptions[0];

@@ -36,7 +36,7 @@ copy .env.example .env
 | `DINGTALK_CALLBACK_TOKEN` | 生产机器人回调的独立共享 Token；为空时生产回调拒绝服务 |
 | `DINGTALK_AITABLE_OPERATOR_ID` | 对目标 Base 有读取权限的操作人 |
 | `AITABLE_BASE_ID` | AI 多维表 Base ID |
-| `BI_CENTER_API_TOKEN` | 独立的人员目录只读 Bearer Token |
+| `BI_CENTER_API_TOKEN` | 人员目录只读 Bearer Token；可按部署决策复用已有 Token，不获得写权限 |
 | `ADMIN_API_TOKEN` | 管理接口令牌 |
 | `PUBLIC_BASE_URL` / `PUBLIC_LINK_SECRET` | 钉钉可访问的 HTTPS 周报与图片签名链接 |
 
@@ -55,7 +55,7 @@ copy .env.example .env
 }
 ```
 
-AI 模型配置是可选项；`AI_BASE_URL`、`AI_API_KEY`、`AI_MODEL` 三项齐全时调用 OpenAI-compatible Chat Completions，否则使用确定性模板并在周报中标记 `fallback/deterministic`。
+AI 模型配置是可选项；`AI_PROVIDER` 标记供应商，`AI_BASE_URL`、`AI_API_KEY`、`AI_MODEL` 三项齐全时调用 OpenAI-compatible Chat Completions，否则使用确定性模板并在周报中标记 `fallback/deterministic`。管理页提供与 `bi_center` 一致的 Provider、API Base、模型名、API Key 脱敏、连接测试、保存和恢复部署配置能力；页面保存的是本服务独立覆盖，不会反向修改 `bi_center`。
 
 ## 周报存档回写
 
