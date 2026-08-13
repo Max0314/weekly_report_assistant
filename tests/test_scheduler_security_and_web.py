@@ -106,9 +106,12 @@ class SchedulerSecurityAndWebTests(unittest.TestCase):
         root = Path(__file__).resolve().parents[1]
         html = (root / "static" / "index.html").read_text(encoding="utf-8")
         script = (root / "static" / "app.js").read_text(encoding="utf-8")
+        nginx = (root / "deploy" / "nginx-weekly-assistant.conf").read_text(encoding="utf-8")
         self.assertNotIn('href="/static/', html)
         self.assertNotIn('src="/static/', html)
         self.assertIn("resolveUrl(path)", script)
+        self.assertIn("proxy_pass http://127.0.0.1:39022;", nginx)
+        self.assertNotIn("proxy_pass http://127.0.0.1:39022/;", nginx)
 
 
 if __name__ == "__main__":
