@@ -1,0 +1,84 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>产品与项目经理周报助手</title>
+  <link rel="stylesheet" href="static/styles.css?v=20260813e">
+</head>
+<body>
+  <header class="topbar">
+    <div>
+      <p class="eyebrow">WEEKLY REPORT ASSISTANT</p>
+      <h1>产品与项目经理周报助手</h1>
+      <p class="subtitle">AI 多维表采集 → 人员匹配 → 周报草稿 → 预览审核 → 正式推送</p>
+    </div>
+    <div class="auth-box">
+      <label for="token">管理令牌</label>
+      <div class="inline"><input id="token" type="password" autocomplete="off" placeholder="ADMIN_API_TOKEN"><button id="saveToken" class="secondary">保存</button></div>
+    </div>
+  </header>
+
+  <main>
+    <section class="panel status-panel">
+      <div class="section-head"><div><p class="eyebrow">READINESS</p><h2>链路就绪状态</h2></div><button id="refreshAll" class="secondary">刷新</button></div>
+      <div id="readiness" class="checks"><p class="muted">保存管理令牌后读取状态。</p></div>
+    </section>
+
+    <section class="panel">
+      <div class="section-head"><div><p class="eyebrow">COVERAGE</p><h2>本周人员覆盖</h2></div><div class="actions"><button id="refreshCoverage" class="secondary">刷新覆盖</button><button id="remindCoverage">提醒缺报人员</button></div></div>
+      <div id="coverage" class="coverage"><p class="muted">同步人员和 AI 表后查看产品经理、项目经理覆盖情况。</p></div>
+    </section>
+
+    <section class="workflow">
+      <article class="step"><span>01</span><h3>同步事实</h3><p>读取 8 张业务表，不把周报存档作为事实来源；使用字段名映射，保留原始快照与变化时间。</p><div class="actions"><button data-action="sync-source">同步 AI 表</button><button data-action="sync-directory" class="secondary">同步人员</button></div></article>
+      <article class="step"><span>02</span><h3>生成草稿</h3><p>统计结果由程序计算，AI 只优化摘要；AI 不可用时自动使用确定性模板。</p><div class="actions"><select id="reportKind"><option value="combined">综合版</option><option value="product">产品经理版</option><option value="project">项目经理版</option></select><button data-action="generate">生成周报</button></div></article>
+      <article class="step"><span>03</span><h3>审核推送</h3><p>预览和正式群分离。正式发送默认关闭自动化，只能由审核人确认触发。</p><p class="safe">正式发送前仍会检查人员缓存、群配置、公开图片链接和审核状态。</p></article>
+    </section>
+
+    <section class="panel">
+      <div class="section-head"><div><p class="eyebrow">REPORTS</p><h2>周报版本</h2></div><span id="busy" class="muted"></span></div>
+      <div id="reports" class="report-list"><p class="muted">暂无数据</p></div>
+    </section>
+
+    <section class="panel config-panel">
+      <div class="section-head"><div><p class="eyebrow">WORKFLOW CONFIG</p><h2>工作流配置</h2></div><button id="saveConfig">保存配置</button></div>
+      <p class="muted">群机器人必须同时配置 openConversationId 与 robotCode；审核人使用钉钉 userId。保存时服务端会清洗无效项，且 v1 始终禁止自动正式发送。</p>
+      <div class="recipient-builder">
+        <div><label for="defaultRobotCode">默认机器人 Code</label><input id="defaultRobotCode" placeholder="ding..."></div>
+        <div><label for="recipientSearch">从 bi_center 选择个人接收人</label><div class="inline"><input id="recipientSearch" placeholder="姓名/部门/职位"><button id="searchRecipient" class="secondary" type="button">搜索</button></div></div>
+        <div><label for="recipientSelect">匹配人员</label><select id="recipientSelect"><option value="">请先同步或搜索人员</option></select></div>
+        <div class="actions"><button id="applyPersonalTarget" type="button">设为个人预览、正式接收人和审核人</button></div>
+      </div>
+      <div class="archive-builder">
+        <label class="toggle"><input id="archiveWriteEnabled" type="checkbox"> 正式发送成功后回写“周报存档”表</label>
+        <div><label for="archiveTableId">存档表 tableId</label><input id="archiveTableId" placeholder="2m05o4u"></div>
+        <div><label for="archiveFieldMap">字段映射（语义键 → 精确 fieldId 或字段名）</label><textarea id="archiveFieldMap" spellcheck="false" placeholder='{"archiveKey":"归档键","title":"周报标题","periodKey":"周期"}'></textarea></div>
+        <p class="muted">启用前至少映射 archiveKey、title、periodKey。可选：reportKind、version、summary、sentAt、reportUrl、status、itemCount、riskCount、overdueCount、coverageMissingCount。</p>
+      </div>
+      <textarea id="configEditor" spellcheck="false" placeholder="保存管理令牌后读取配置"></textarea>
+    </section>
+
+    <section class="panel log-panel">
+      <div class="section-head"><div><p class="eyebrow">ACTIVITY</p><h2>操作结果</h2></div><button id="clearLog" class="ghost">清空</button></div>
+      <pre id="log">等待操作。</pre>
+    </section>
+
+    <section class="panel">
+      <div class="section-head"><div><p class="eyebrow">ROBOT EVENTS</p><h2>机器人最近回调</h2></div><button id="refreshEvents" class="secondary">刷新事件</button></div>
+      <div id="robotEvents" class="event-list"><p class="muted">暂无回调事件。</p></div>
+    </section>
+  </main>
+
+  <dialog id="reportDialog">
+    <div class="dialog-head"><div><p class="eyebrow">REPORT DETAIL</p><h2 id="reportDialogTitle">周报详情</h2></div><button id="closeReportDialog" class="ghost" type="button">关闭</button></div>
+    <p id="reportDialogMeta" class="muted"></p>
+    <label for="sectionEditor">正文区块 JSON</label>
+    <textarea id="sectionEditor" spellcheck="false"></textarea>
+    <div class="actions"><button id="saveSections" type="button">保存正文</button></div>
+    <h3>纳入事实</h3>
+    <div id="reportSources" class="source-list"></div>
+  </dialog>
+  <script src="static/app.js?v=20260813e"></script>
+</body>
+</html>
