@@ -131,7 +131,6 @@ class AISummaryClient:
                 if isinstance(item, dict) and item.get("visible") is not False
             ][:100],
             "factSelection": {"total": len(items), "sentToAI": len(facts), "prioritizedRisksFirst": True},
-            "fallbackDraft": fallback,
             "output": {key: "string" for key in SECTION_KEYS},
             "rules": [
                 "输出单个 JSON 对象，不使用 Markdown 代码块",
@@ -159,7 +158,7 @@ class AISummaryClient:
                         },
                         {"role": "user", "content": json.dumps(prompt, ensure_ascii=False)},
                     ],
-                    max_tokens=1800,
+                    max_tokens=3200,
                     temperature=0.2,
                 ),
                 timeout=max(self.settings.http_timeout_seconds, 60),

@@ -43,8 +43,10 @@ class AISummaryTests(unittest.TestCase):
         self.assertNotIn("productManagers", prompt["facts"][0])
         self.assertEqual("项目A", prompt["projectBackground"][0]["name"])
         self.assertNotIn("owner", prompt["projectBackground"][0])
+        self.assertNotIn("fallbackDraft", prompt)
         self.assertIn("不得据此编造", prompt["rules"][-1])
         self.assertEqual(100, len(next(item for item in prompt["facts"] if item["id"] != 14)["progress"]))
+        self.assertEqual(3200, payload["max_tokens"])
         self.assertEqual("内容", result["executiveSummary"])
 
 
