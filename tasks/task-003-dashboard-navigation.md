@@ -1,6 +1,6 @@
 # task-003：管理后台信息架构与页面交互
 
-- 状态：已验证，待部署
+- 状态：已部署
 - 工作目录：`D:\code_CPL\weekly_report_assistant`
 - 交付分支：`feature/task-003-dashboard-navigation`
 - 基线：`origin/main@20a93481dcb52a2d097e3033c15908208f922540`
@@ -33,3 +33,5 @@
 
 - 2026-08-14：Python 38 项单元测试通过，`compileall`、`node --check`、`git diff --check` 通过。
 - 2026-08-14：在本地真实 FastAPI 页面完成概览、周报展示、周报配置、模型配置、推送设置的浏览器导航和渲染验收；新增项目交互正常。
+- 2026-08-14：功能提交 `10c95aa` 已合入 GitHub `main` 并部署到 `/home/max/apps/weekly_report_assistant`；单容器健康检查与公网子路径页面验收通过。
+- 2026-08-14：完整镜像构建受 Playwright CDN 下载阻塞，本次复用现有健康镜像的相同依赖层，仅叠加新 `app/static` 层；运行数据卷和环境配置未修改。
