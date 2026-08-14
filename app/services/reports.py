@@ -348,6 +348,7 @@ class ReportService:
             "coveredCount": coverage["coveredCount"],
             "missingCount": coverage["missingCount"],
         }
+        config = self.config_service.get()
         fallback = self._draft_sections(items, metrics)
         sections = fallback
         ai_status = "deterministic"
@@ -364,6 +365,7 @@ class ReportService:
                     metrics=metrics,
                     items=items,
                     fallback=fallback,
+                    project_baseline=config.get("projectBaseline") or [],
                 )
                 ai_status = "success"
             except AISummaryError as exc:
@@ -375,7 +377,6 @@ class ReportService:
         ) or {}
         version = int(latest.get("version") or 0) + 1
         timestamp = to_db(now_local())
-        config = self.config_service.get()
         title_suffix = {"combined": "", "product": "（产品经理版）", "project": "（项目经理版）"}[report_kind]
         report_id = self.db.execute(
             """

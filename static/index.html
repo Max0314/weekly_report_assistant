@@ -3,102 +3,262 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="theme-color" content="#f6f8fb">
   <title>产品与项目经理周报助手</title>
-  <link rel="stylesheet" href="static/styles.css?v=20260813g">
+  <link rel="stylesheet" href="static/styles.css?v=20260814b">
 </head>
 <body>
-  <header class="topbar">
-    <div>
-      <p class="eyebrow">WEEKLY REPORT ASSISTANT</p>
-      <h1>产品与项目经理周报助手</h1>
-      <p class="subtitle">AI 多维表采集 → 人员匹配 → 周报草稿 → 预览审核 → 正式推送</p>
-    </div>
-    <div class="auth-box">
-      <label for="token">管理令牌</label>
-      <div class="inline"><input id="token" type="password" autocomplete="off" placeholder="ADMIN_API_TOKEN"><button id="saveToken" class="secondary">保存</button></div>
-    </div>
-  </header>
-
-  <main>
-    <section class="panel status-panel">
-      <div class="section-head"><div><p class="eyebrow">READINESS</p><h2>链路就绪状态</h2></div><button id="refreshAll" class="secondary">刷新</button></div>
-      <div id="readiness" class="checks"><p class="muted">保存管理令牌后读取状态。</p></div>
-    </section>
-
-    <section class="panel">
-      <div class="section-head"><div><p class="eyebrow">COVERAGE</p><h2>本周人员覆盖</h2></div><div class="actions"><button id="refreshCoverage" class="secondary">刷新覆盖</button><button id="remindCoverage">提醒缺报人员</button></div></div>
-      <div id="coverage" class="coverage"><p class="muted">同步人员和 AI 表后查看产品经理、项目经理覆盖情况。</p></div>
-    </section>
-
-    <section class="workflow">
-      <article class="step"><span>01</span><h3>同步事实</h3><p>读取 8 张业务表，不把周报存档作为事实来源；使用字段名映射，保留原始快照与变化时间。</p><div class="actions"><button data-action="sync-source">同步 AI 表</button><button data-action="sync-directory" class="secondary">同步人员</button></div></article>
-      <article class="step"><span>02</span><h3>生成草稿</h3><p>统计结果由程序计算，AI 只优化摘要；AI 不可用时自动使用确定性模板。</p><div class="actions"><select id="reportKind"><option value="combined">综合版</option><option value="product">产品经理版</option><option value="project">项目经理版</option></select><button data-action="generate">生成周报</button></div></article>
-      <article class="step"><span>03</span><h3>审核推送</h3><p>预览和正式群分离。正式发送默认关闭自动化，只能由审核人确认触发。</p><p class="safe">正式发送前仍会检查人员缓存、群配置、公开图片链接和审核状态。</p></article>
-    </section>
-
-    <section class="panel">
-      <div class="section-head"><div><p class="eyebrow">REPORTS</p><h2>周报版本</h2></div><span id="busy" class="muted"></span></div>
-      <div id="reports" class="report-list"><p class="muted">暂无数据</p></div>
-    </section>
-
-    <section class="panel model-panel">
-      <div class="section-head">
-        <div><p class="eyebrow">UNIFIED MODEL GATEWAY</p><h2>模型配置</h2></div>
-        <div class="actions"><button id="testModelConfig" class="secondary">测试连接</button><button id="saveModelConfig">保存并启用</button><button id="resetModelConfig" class="ghost">恢复沿用</button></div>
+  <div class="app-shell">
+    <header class="app-header">
+      <button id="menuToggle" class="icon-button menu-toggle" type="button" aria-label="打开导航" aria-controls="appSidebar" aria-expanded="false">☰</button>
+      <div class="page-identity">
+        <p id="pageEyebrow" class="eyebrow">WORKSPACE</p>
+        <div><h1 id="pageTitle">工作台概览</h1><p id="pageSubtitle">掌握数据、生成、审核与推送状态</p></div>
       </div>
-      <p class="muted">初始配置沿用 bi_center 当前模型和同一把 API Key；读取接口只显示脱敏 Key。留空 API Key 保存时会保留当前密钥。</p>
-      <div class="model-status">
-        <div><span>当前来源</span><strong id="modelSource">待读取</strong></div>
-        <div><span>当前模型</span><strong id="modelEffectiveName">待读取</strong></div>
-        <div><span>API Key</span><strong id="modelKeyStatus">待读取</strong></div>
+      <div class="header-actions">
+        <span id="busy" class="busy-pill" aria-live="polite"></span>
+        <button id="refreshAll" class="secondary compact" type="button">刷新数据</button>
+        <details class="auth-menu">
+          <summary>管理令牌</summary>
+          <div class="auth-popover">
+            <label for="token">ADMIN_API_TOKEN</label>
+            <input id="token" type="password" autocomplete="off" placeholder="输入管理令牌">
+            <button id="saveToken" type="button">保存并连接</button>
+            <p>令牌只保存在当前浏览器，不会写入服务端配置。</p>
+          </div>
+        </details>
       </div>
-      <div class="model-form">
-        <label>Provider<select id="modelProvider"></select></label>
-        <label>模型名称<input id="modelName" list="modelNameOptions" placeholder="openai/gpt-5.4-mini"><datalist id="modelNameOptions"></datalist></label>
-        <label>API Key<input id="modelApiKey" type="password" autocomplete="new-password" placeholder="留空则保留当前 Key"></label>
-        <label class="wide">API Base URL<input id="modelApiBase" placeholder="https://openrouter.ai/api/v1"></label>
-      </div>
-      <div id="modelFeedback" class="model-feedback muted">保存管理令牌后读取模型配置。</div>
-    </section>
+    </header>
 
-    <section class="panel config-panel">
-      <div class="section-head"><div><p class="eyebrow">WORKFLOW CONFIG</p><h2>工作流配置</h2></div><button id="saveConfig">保存配置</button></div>
-      <p class="muted">群机器人必须同时配置 openConversationId 与 robotCode；审核人使用钉钉 userId。保存时服务端会清洗无效项，且 v1 始终禁止自动正式发送。</p>
-      <div class="recipient-builder">
-        <div><label for="defaultRobotCode">默认机器人 Code</label><input id="defaultRobotCode" placeholder="ding..."></div>
-        <div><label for="recipientSearch">从 bi_center 选择个人接收人</label><div class="inline"><input id="recipientSearch" placeholder="姓名/部门/职位"><button id="searchRecipient" class="secondary" type="button">搜索</button></div></div>
-        <div><label for="recipientSelect">匹配人员</label><select id="recipientSelect"><option value="">请先同步或搜索人员</option></select></div>
-        <div class="actions"><button id="applyPersonalTarget" type="button">设为个人预览、正式接收人和审核人</button></div>
+    <aside id="appSidebar" class="app-sidebar">
+      <div class="brand">
+        <div class="brand-mark">周</div>
+        <div><strong>周报助手</strong><span>产品与项目管理</span></div>
       </div>
-      <div class="archive-builder">
-        <label class="toggle"><input id="archiveWriteEnabled" type="checkbox"> 正式发送成功后回写“周报存档”表</label>
-        <div><label for="archiveTableId">存档表 tableId</label><input id="archiveTableId" placeholder="2m05o4u"></div>
-        <div><label for="archiveFieldMap">字段映射（语义键 → 精确 fieldId 或字段名）</label><textarea id="archiveFieldMap" spellcheck="false" placeholder='{"archiveKey":"归档键","title":"周报标题","periodKey":"周期"}'></textarea></div>
-        <p class="muted">启用前至少映射 archiveKey、title、periodKey。可选：reportKind、version、summary、sentAt、reportUrl、status、itemCount、riskCount、overdueCount、coverageMissingCount。</p>
+      <nav class="sidebar-nav" aria-label="功能导航">
+        <p class="nav-group-label">工作台</p>
+        <a href="#/overview" class="nav-item" data-route="overview"><span class="nav-icon">⌂</span><span>概览</span></a>
+        <p class="nav-group-label">周报管理</p>
+        <a href="#/reports" class="nav-item" data-route="reports"><span class="nav-icon">▤</span><span>周报展示</span></a>
+        <a href="#/report-config" class="nav-item" data-route="report-config"><span class="nav-icon">◇</span><span>周报配置</span></a>
+        <p class="nav-group-label">系统设置</p>
+        <a href="#/model-config" class="nav-item" data-route="model-config"><span class="nav-icon">✦</span><span>模型配置</span></a>
+        <a href="#/delivery" class="nav-item" data-route="delivery"><span class="nav-icon">➤</span><span>推送设置</span></a>
+      </nav>
+      <div class="sidebar-footer">
+        <span class="status-dot"></span>
+        <div><strong id="sidebarReadyText">等待连接</strong><span id="sidebarReadyDetail">保存管理令牌后读取状态</span></div>
       </div>
-      <textarea id="configEditor" spellcheck="false" placeholder="保存管理令牌后读取配置"></textarea>
-    </section>
+    </aside>
+    <button id="sidebarBackdrop" class="sidebar-backdrop" type="button" aria-label="关闭导航"></button>
 
-    <section class="panel log-panel">
-      <div class="section-head"><div><p class="eyebrow">ACTIVITY</p><h2>操作结果</h2></div><button id="clearLog" class="ghost">清空</button></div>
-      <pre id="log">等待操作。</pre>
-    </section>
+    <main class="app-main">
+      <section class="page" data-page="overview">
+        <div class="page-width">
+          <section class="hero-card">
+            <div class="hero-copy">
+              <span class="hero-kicker">WEEKLY OPERATIONS</span>
+              <h2>从事实采集到正式推送，一处完成</h2>
+              <p>周报助手独立读取 AI 多维表和 bi_center 人员目录，保留版本、事实快照与审核痕迹。</p>
+              <div class="actions"><button data-action="sync-source" type="button">同步 AI 表</button><button data-action="sync-directory" class="secondary" type="button">同步人员</button><button data-go="reports" class="ghost" type="button">进入周报工作台</button></div>
+            </div>
+            <div id="overviewLatest" class="hero-latest"><p class="muted">连接后显示最新周报。</p></div>
+          </section>
 
-    <section class="panel">
-      <div class="section-head"><div><p class="eyebrow">ROBOT EVENTS</p><h2>机器人最近回调</h2></div><button id="refreshEvents" class="secondary">刷新事件</button></div>
-      <div id="robotEvents" class="event-list"><p class="muted">暂无回调事件。</p></div>
-    </section>
-  </main>
+          <div id="overviewStats" class="metric-grid">
+            <article class="metric-card"><span>有效事实</span><strong>—</strong><small>等待读取</small></article>
+            <article class="metric-card"><span>最新版本</span><strong>—</strong><small>等待读取</small></article>
+            <article class="metric-card"><span>人员覆盖</span><strong>—</strong><small>等待读取</small></article>
+            <article class="metric-card"><span>推送状态</span><strong>—</strong><small>等待读取</small></article>
+          </div>
+
+          <section class="panel">
+            <div class="section-head"><div><p class="eyebrow">READINESS</p><h2>链路就绪状态</h2><p>每项检查都对应实际运行依赖。</p></div><button id="refreshOverview" class="secondary" type="button">重新检查</button></div>
+            <div id="readiness" class="checks"><p class="muted">保存管理令牌后读取状态。</p></div>
+          </section>
+
+          <div class="dashboard-grid">
+            <section class="panel">
+              <div class="section-head"><div><p class="eyebrow">COVERAGE</p><h2>本周人员覆盖</h2></div><div class="actions"><button id="refreshCoverage" class="secondary compact" type="button">刷新</button><button id="remindCoverage" class="compact" type="button">提醒缺报</button></div></div>
+              <div id="coverage" class="coverage"><p class="muted">同步人员和 AI 表后查看覆盖情况。</p></div>
+            </section>
+            <section class="panel workflow-panel">
+              <div class="section-head"><div><p class="eyebrow">PROCESS</p><h2>标准流程</h2></div></div>
+              <ol class="process-list">
+                <li><span>1</span><div><strong>同步事实</strong><p>读取 8 张来源表并固化快照。</p></div></li>
+                <li><span>2</span><div><strong>生成与修订</strong><p>程序计算指标，编辑六个正文区块。</p></div></li>
+                <li><span>3</span><div><strong>预览与确认</strong><p>测试目标先看，确认人审核后正式发送。</p></div></li>
+              </ol>
+            </section>
+          </div>
+
+          <section class="panel log-panel">
+            <div class="section-head"><div><p class="eyebrow">ACTIVITY</p><h2>最近操作</h2></div><button id="clearLog" class="ghost compact" type="button">清空</button></div>
+            <pre id="log">等待操作。</pre>
+          </section>
+        </div>
+      </section>
+
+      <section class="page" data-page="reports" hidden>
+        <div class="page-width">
+          <section class="page-hero compact-hero">
+            <div><p class="eyebrow">REPORT CENTER</p><h2>周报展示</h2><p>查看当前成稿、正式版本和历史记录，并完成编辑、预览与审核。</p></div>
+            <div class="actions"><button data-action="sync-source" class="secondary" type="button">同步事实</button><select id="reportKind" aria-label="周报类型"><option value="combined">综合版</option><option value="product">产品经理版</option><option value="project">项目经理版</option></select><button data-action="generate" type="button">生成新周报</button></div>
+          </section>
+
+          <section class="panel">
+            <div class="report-toolbar">
+              <div class="segmented" role="tablist" aria-label="周报范围">
+                <button class="active" data-report-filter="current" type="button">当前周报</button>
+                <button data-report-filter="formal" type="button">正式周报</button>
+                <button data-report-filter="history" type="button">历史记录</button>
+              </div>
+              <div class="toolbar-filters"><select id="reportKindFilter" aria-label="筛选周报类型"><option value="all">全部类型</option><option value="combined">综合版</option><option value="product">产品经理版</option><option value="project">项目经理版</option></select><input id="reportSearch" type="search" placeholder="搜索标题、周期或编号"></div>
+            </div>
+            <div id="reportFilterSummary" class="list-summary">等待读取周报。</div>
+            <div id="reports" class="report-list"><p class="muted">暂无数据</p></div>
+          </section>
+        </div>
+      </section>
+
+      <section class="page" data-page="report-config" hidden>
+        <div class="page-width">
+          <section class="page-hero compact-hero">
+            <div><p class="eyebrow">REPORT SETTINGS</p><h2>周报配置</h2><p>维护周期口径、项目背景、来源同步与存档规则。</p></div>
+            <button id="saveReportConfig" type="button">保存周报配置</button>
+          </section>
+
+          <section class="panel">
+            <div class="section-head"><div><span class="section-index">01</span><h2>基础设置</h2><p>决定周报标题、统计截止时间和风险口径。</p></div></div>
+            <div class="form-grid four-cols">
+              <label>周报标题<input id="reportTitle" placeholder="产品与项目管理周报"></label>
+              <label>周期截止日<select id="periodEndWeekday"><option value="0">周一</option><option value="1">周二</option><option value="2">周三</option><option value="3">周四</option><option value="4">周五</option><option value="5">周六</option><option value="6">周日</option></select></label>
+              <label>周期截止时间<input id="periodEndTime" type="time"></label>
+              <label>临期范围（天）<input id="dueSoonDays" type="number" min="1" max="90"></label>
+            </div>
+            <div class="toggle-grid">
+              <label class="toggle-card"><input id="workflowEnabled" type="checkbox"><span><strong>启用周报工作流</strong><small>允许调度器执行已开启的自动任务。</small></span></label>
+              <label class="toggle-card"><input id="sourceSyncEnabled" type="checkbox"><span><strong>自动同步 AI 表</strong><small>按同步间隔刷新事实缓存。</small></span></label>
+              <label class="toggle-card"><input id="directorySyncEnabled" type="checkbox"><span><strong>自动同步人员</strong><small>从 bi_center 刷新员工与组织目录。</small></span></label>
+              <label class="toggle-card"><input id="enforceDirectory" type="checkbox"><span><strong>正式发送校验人员目录</strong><small>人员缓存不可用时阻止正式推送。</small></span></label>
+            </div>
+            <div class="form-grid three-cols top-gap">
+              <label>事实同步间隔（分钟）<input id="sourceSyncInterval" type="number" min="5" max="1440"></label>
+              <label>事实新鲜度（小时）<input id="sourceFreshnessHours" type="number" min="1" max="168"></label>
+              <label>项目经理职位关键词<input id="projectManagerKeywords" placeholder="多个关键词用逗号分隔"></label>
+            </div>
+          </section>
+
+          <section class="panel">
+            <div class="section-head"><div><span class="section-index">02</span><h2>项目基线</h2><p>项目基础描述只用于归类和叙述背景，不会被当作本周事实。</p></div><button id="addProject" class="secondary" type="button">新增项目</button></div>
+            <div class="table-wrap"><table class="project-table"><thead><tr><th>排序</th><th>方向</th><th>项目名称</th><th>责任人</th><th>状态</th><th>项目基础描述</th><th>展示</th><th></th></tr></thead><tbody id="projectRows"></tbody></table></div>
+            <div id="projectEmpty" class="empty-state"><strong>暂未配置项目基线</strong><p>新增项目后，可为 AI 归纳提供稳定的项目背景。</p></div>
+          </section>
+
+          <section class="panel">
+            <div class="section-head"><div><span class="section-index">03</span><h2>周报存档</h2><p>正式发送成功后可选择回写 AI 表；默认关闭。</p></div></div>
+            <label class="toggle-card inline-toggle"><input id="archiveWriteEnabled" type="checkbox"><span><strong>启用周报存档回写</strong><small>归档失败不会重复发送钉钉消息。</small></span></label>
+            <div class="form-grid two-cols top-gap"><label>存档表 tableId<input id="archiveTableId" placeholder="2m05o4u"></label><label>字段映射（语义键 → fieldId 或精确字段名）<textarea id="archiveFieldMap" class="code-textarea" spellcheck="false" placeholder='{"archiveKey":"归档键","title":"周报标题","periodKey":"周期"}'></textarea></label></div>
+          </section>
+
+          <details class="panel advanced-panel">
+            <summary><span><strong>高级 JSON 配置</strong><small>用于迁移未在表单中展示的兼容配置。</small></span><span>展开</span></summary>
+            <div class="advanced-body"><textarea id="configEditor" class="code-editor" spellcheck="false" placeholder="保存管理令牌后读取配置"></textarea><div class="actions"><button id="applyConfigJson" class="secondary" type="button">应用到表单</button><button id="copyConfigJson" class="ghost" type="button">复制 JSON</button></div></div>
+          </details>
+        </div>
+      </section>
+
+      <section class="page" data-page="model-config" hidden>
+        <div class="page-width narrow-width">
+          <section class="page-hero compact-hero">
+            <div><p class="eyebrow">UNIFIED MODEL GATEWAY</p><h2>模型配置</h2><p>配置方式与 bi_center 一致，默认沿用其 Provider、模型和同一把 API Key。</p></div>
+            <div class="actions"><button id="testModelConfig" class="secondary" type="button">测试连接</button><button id="saveModelConfig" type="button">保存并启用</button></div>
+          </section>
+          <section class="panel model-panel">
+            <div class="model-status">
+              <div><span>当前来源</span><strong id="modelSource">待读取</strong></div>
+              <div><span>当前模型</span><strong id="modelEffectiveName">待读取</strong></div>
+              <div><span>API Key</span><strong id="modelKeyStatus">待读取</strong></div>
+            </div>
+            <div class="model-callout"><span>i</span><p>页面不会返回明文 Key。API Key 留空保存时会保留当前密钥；“恢复沿用”只删除本服务覆盖，不会修改 bi_center。</p></div>
+            <div class="form-grid two-cols">
+              <label>Provider<select id="modelProvider"></select></label>
+              <label>模型名称<input id="modelName" list="modelNameOptions" placeholder="openai/gpt-5.4-mini"><datalist id="modelNameOptions"></datalist></label>
+              <label class="full-span">API Base URL<input id="modelApiBase" placeholder="https://openrouter.ai/api/v1"></label>
+              <label class="full-span">API Key<input id="modelApiKey" type="password" autocomplete="new-password" placeholder="留空则保留当前 Key"></label>
+            </div>
+            <div id="modelFeedback" class="feedback muted">保存管理令牌后读取模型配置。</div>
+            <div class="actions end-actions"><button id="resetModelConfig" class="ghost" type="button">恢复沿用 bi_center 配置</button></div>
+          </section>
+        </div>
+      </section>
+
+      <section class="page" data-page="delivery" hidden>
+        <div class="page-width">
+          <section class="page-hero compact-hero">
+            <div><p class="eyebrow">DELIVERY CONTROL</p><h2>推送设置</h2><p>测试目标、正式目标和周报确认人相互独立，正式发送始终需要人工确认。</p></div>
+            <button id="saveDeliveryConfig" type="button">保存推送设置</button>
+          </section>
+
+          <div id="schedulerBanner" class="safety-banner"><span>安全策略</span><strong>读取调度器状态中…</strong><p>正式推送不会自动执行。</p></div>
+
+          <section class="panel">
+            <div class="section-head"><div><span class="section-index">01</span><h2>机器人与个人接收人</h2><p>个人推送使用默认 Robot Code；人员来自 bi_center 只读目录。</p></div></div>
+            <div class="form-grid two-cols"><label>默认 Robot Code<input id="defaultRobotCode" placeholder="ding..."></label><label>搜索人员<div class="inline"><input id="recipientSearch" placeholder="姓名、部门或职位"><button id="searchRecipient" class="secondary" type="button">搜索</button></div></label></div>
+            <div class="recipient-picker top-gap"><select id="recipientSelect"><option value="">请先同步或搜索人员</option></select><button data-add-person="previewPersonalTargets" class="secondary" type="button">加入测试接收人</button><button data-add-person="formalPersonalTargets" class="secondary" type="button">加入正式接收人</button><button data-add-person="approverTargets" class="secondary" type="button">设为确认人</button><button id="applyPersonalTarget" type="button">设为个人全流程</button></div>
+            <div class="target-columns top-gap">
+              <div class="target-box"><div><strong>测试接收人</strong><span>接收预览</span></div><div id="previewPersonalTargets" class="target-list"></div></div>
+              <div class="target-box"><div><strong>正式接收人</strong><span>审核后接收</span></div><div id="formalPersonalTargets" class="target-list"></div></div>
+              <div class="target-box"><div><strong>周报确认人</strong><span>可执行确认指令</span></div><div id="approverTargets" class="target-list"></div></div>
+            </div>
+          </section>
+
+          <section class="panel">
+            <div class="section-head"><div><span class="section-index">02</span><h2>群推送目标</h2><p>测试群和正式群不能使用相同的 openConversationId。</p></div></div>
+            <div class="group-target-grid">
+              <div class="group-editor"><div class="group-editor-head"><div><strong>测试群</strong><span>生成后预览与联调</span></div><button data-add-group="previewGroupTargets" class="secondary compact" type="button">新增</button></div><div id="previewGroupTargets" class="group-rows"></div></div>
+              <div class="group-editor"><div class="group-editor-head"><div><strong>正式群</strong><span>确认后正式发布</span></div><button data-add-group="formalGroupTargets" class="secondary compact" type="button">新增</button></div><div id="formalGroupTargets" class="group-rows"></div></div>
+            </div>
+          </section>
+
+          <section class="panel">
+            <div class="section-head"><div><span class="section-index">03</span><h2>推送节奏与安全规则</h2><p>可以自动同步、生成和预览；正式发送始终由确认人触发。</p></div></div>
+            <div class="form-grid four-cols"><label>生成日期<select id="generateWeekday"><option value="0">周一</option><option value="1">周二</option><option value="2">周三</option><option value="3">周四</option><option value="4">周五</option><option value="5">周六</option><option value="6">周日</option></select></label><label>生成时间<input id="generateTime" type="time"></label><label>静默开始<input id="quietStartHour" type="number" min="0" max="23"></label><label>静默结束<input id="quietEndHour" type="number" min="0" max="23"></label></div>
+            <div class="toggle-grid top-gap">
+              <label class="toggle-card"><input id="autoGenerateEnabled" type="checkbox"><span><strong>自动生成草稿</strong><small>事实快照新鲜时按计划生成。</small></span></label>
+              <label class="toggle-card"><input id="autoPreviewEnabled" type="checkbox"><span><strong>自动发送预览</strong><small>只发测试目标，不触发正式发送。</small></span></label>
+              <label class="toggle-card"><input id="requireApproval" type="checkbox"><span><strong>正式发送需要确认</strong><small>确认人审核通过后才能发送。</small></span></label>
+              <label class="toggle-card"><input id="requirePreviewBeforeFormal" type="checkbox"><span><strong>正式发送前必须预览</strong><small>预览成功后才允许审核和正式发送。</small></span></label>
+              <label class="toggle-card"><input id="sendGroupImages" type="checkbox"><span><strong>群消息附带周报图片</strong><small>使用签名公开链接发送渲染图。</small></span></label>
+              <label class="toggle-card is-locked"><input type="checkbox" checked disabled><span><strong>禁止自动正式发送</strong><small>后端强制开启，页面不可关闭。</small></span></label>
+            </div>
+          </section>
+
+          <section class="panel">
+            <div class="section-head"><div><span class="section-index">04</span><h2>机器人最近回调</h2><p>从真实回调中识别群 ID、Robot Code 和确认人 senderId。</p></div><button id="refreshEvents" class="secondary" type="button">刷新事件</button></div>
+            <div id="robotEvents" class="event-list"><p class="muted">暂无回调事件。</p></div>
+          </section>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <div id="toast" class="toast" role="status" aria-live="polite"></div>
 
   <dialog id="reportDialog">
-    <div class="dialog-head"><div><p class="eyebrow">REPORT DETAIL</p><h2 id="reportDialogTitle">周报详情</h2></div><button id="closeReportDialog" class="ghost" type="button">关闭</button></div>
-    <p id="reportDialogMeta" class="muted"></p>
-    <label for="sectionEditor">正文区块 JSON</label>
-    <textarea id="sectionEditor" spellcheck="false"></textarea>
-    <div class="actions"><button id="saveSections" type="button">保存正文</button></div>
-    <h3>纳入事实</h3>
-    <div id="reportSources" class="source-list"></div>
+    <div class="dialog-head"><div><p class="eyebrow">REPORT DETAIL</p><h2 id="reportDialogTitle">周报详情</h2><p id="reportDialogMeta"></p></div><button id="closeReportDialog" class="icon-button" type="button" aria-label="关闭">×</button></div>
+    <div class="section-editor-grid">
+      <label>管理摘要<textarea id="section-executiveSummary"></textarea></label>
+      <label>产品工作亮点<textarea id="section-productHighlights"></textarea></label>
+      <label>项目工作亮点<textarea id="section-projectHighlights"></textarea></label>
+      <label>风险与问题<textarea id="section-risks"></textarea></label>
+      <label>下周计划<textarea id="section-nextPlans"></textarea></label>
+      <label>需协调支持<textarea id="section-supportNeeds"></textarea></label>
+    </div>
+    <div class="dialog-actions"><span id="reportDirtyHint">修改后保存会清除旧图片和审核状态。</span><button id="saveSections" type="button">保存周报正文</button></div>
+    <details class="source-details"><summary>查看本版纳入的事实清单</summary><div id="reportSources" class="source-list"></div></details>
   </dialog>
-  <script src="static/app.js?v=20260813g"></script>
+
+  <script src="static/app.js?v=20260814b"></script>
 </body>
 </html>

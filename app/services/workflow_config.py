@@ -81,6 +81,35 @@ def _keywords(value: Any) -> list[str]:
     return result
 
 
+def _projects(value: Any) -> list[dict[str, Any]]:
+    if not isinstance(value, list):
+        return []
+    result: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    allowed_statuses = {"active", "waiting", "paused", "done"}
+    for index, item in enumerate(value[:100]):
+        if not isinstance(item, dict):
+            continue
+        name = _text(item.get("name"))[:120]
+        normalized_name = name.casefold()
+        if not name or normalized_name in seen:
+            continue
+        seen.add(normalized_name)
+        status = _text(item.get("status"))
+        result.append(
+            {
+                "seq": _int(item.get("seq"), index + 1, 1, 9999),
+                "direction": _text(item.get("direction"))[:80],
+                "name": name,
+                "owner": _text(item.get("owner"))[:80],
+                "status": status if status in allowed_statuses else "active",
+                "description": _text(item.get("description") or item.get("note"))[:1000],
+                "visible": item.get("visible") is not False,
+            }
+        )
+    return sorted(result, key=lambda item: (int(item["seq"]), str(item["name"])))
+
+
 def normalize_config(raw: dict[str, Any] | None) -> dict[str, Any]:
     config = {**DEFAULT_WORKFLOW_CONFIG, **(raw or {})}
     for key in (
@@ -118,6 +147,7 @@ def normalize_config(raw: dict[str, Any] | None) -> dict[str, Any]:
     config["approverTargets"] = _people(config.get("approverTargets"))
     config["projectManagerRoster"] = _people(config.get("projectManagerRoster"))
     config["projectManagerTitleKeywords"] = _keywords(config.get("projectManagerTitleKeywords"))
+    config["projectBaseline"] = _projects(config.get("projectBaseline"))
     config["approvalCommandScope"] = (
         "formal_only" if config.get("approvalCommandScope") == "formal_only" else "any_configured_group"
     )

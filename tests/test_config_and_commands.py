@@ -21,6 +21,29 @@ class WorkflowConfigTests(unittest.TestCase):
         self.assertFalse(config["autoFormalSendEnabled"])
         self.assertEqual(1, len(config["previewGroupTargets"]))
 
+    def test_project_baseline_is_cleaned_deduplicated_and_sorted(self) -> None:
+        config = normalize_config(
+            {
+                "projectBaseline": [
+                    {
+                        "seq": 9,
+                        "name": "NeoFlow",
+                        "direction": "平台",
+                        "owner": "负责人",
+                        "status": "invalid",
+                        "note": "项目基础描述",
+                    },
+                    {"seq": 2, "name": "周报助手", "status": "active", "visible": False},
+                    {"seq": 1, "name": "neoflow", "description": "重复项"},
+                    {"name": ""},
+                ]
+            }
+        )
+        self.assertEqual(["周报助手", "NeoFlow"], [item["name"] for item in config["projectBaseline"]])
+        self.assertEqual("项目基础描述", config["projectBaseline"][1]["description"])
+        self.assertEqual("active", config["projectBaseline"][1]["status"])
+        self.assertFalse(config["projectBaseline"][0]["visible"])
+
     def test_command_parser_extracts_report_and_reason(self) -> None:
         parsed = parse_command("@周报助手 需要修改 #42：补充项目风险")
         self.assertEqual("changes", parsed["command"])

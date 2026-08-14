@@ -70,6 +70,7 @@ class AISummaryClient:
         metrics: dict[str, Any],
         items: list[dict[str, Any]],
         fallback: dict[str, str],
+        project_baseline: list[dict[str, Any]] | None = None,
     ) -> dict[str, str]:
         model_config = self._model_config()
         if not all(model_config.get(key) for key in ("apiBase", "apiKey", "model")):
@@ -115,6 +116,20 @@ class AISummaryClient:
             "window": window,
             "metrics": metrics,
             "facts": facts,
+            "projectBackground": [
+                {
+                    "direction": clipped(item.get("direction")),
+                    "name": clipped(item.get("name")),
+                    "status": clipped(item.get("status")),
+                    "description": clipped(item.get("description")),
+                    **(
+                        {"owner": clipped(item.get("owner"))}
+                        if self.settings.ai_include_person_names else {}
+                    ),
+                }
+                for item in (project_baseline or [])
+                if isinstance(item, dict) and item.get("visible") is not False
+            ][:100],
             "factSelection": {"total": len(items), "sentToAI": len(facts), "prioritizedRisksFirst": True},
             "fallbackDraft": fallback,
             "output": {key: "string" for key in SECTION_KEYS},
@@ -124,6 +139,7 @@ class AISummaryClient:
                 "风险必须保留事项名称、状态或期限依据",
                 "没有事实时写暂无，不得猜测",
                 "不评价个人绩效，不生成排名",
+                "项目背景只用于项目归类和叙述背景，不得据此编造本周进展、风险或计划",
             ],
         }
         url = model_config["apiBase"].rstrip("/")

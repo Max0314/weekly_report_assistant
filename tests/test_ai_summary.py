@@ -29,12 +29,21 @@ class AISummaryTests(unittest.TestCase):
         ]
         response = {"choices": [{"message": {"content": json.dumps({key: "内容" for key in SECTION_KEYS})}}]}
         with patch("app.services.ai_summary.request_json", return_value=response) as request:
-            result = AISummaryClient(config).summarize(window={}, metrics={}, items=items, fallback={})
+            result = AISummaryClient(config).summarize(
+                window={}, metrics={}, items=items, fallback={},
+                project_baseline=[{
+                    "name": "项目A", "direction": "平台", "owner": "负责人姓名",
+                    "description": "基础描述", "visible": True
+                }],
+            )
         payload = request.call_args.kwargs["payload"]
         prompt = json.loads(payload["messages"][1]["content"])
         self.assertEqual(10, len(prompt["facts"]))
         self.assertEqual(14, prompt["facts"][0]["id"])
         self.assertNotIn("productManagers", prompt["facts"][0])
+        self.assertEqual("项目A", prompt["projectBackground"][0]["name"])
+        self.assertNotIn("owner", prompt["projectBackground"][0])
+        self.assertIn("不得据此编造", prompt["rules"][-1])
         self.assertEqual(100, len(next(item for item in prompt["facts"] if item["id"] != 14)["progress"]))
         self.assertEqual("内容", result["executiveSummary"])
 

@@ -143,6 +143,13 @@ def readiness(_: str = Depends(_admin_token)) -> dict[str, Any]:
                 "tableId": str(config.get("archiveTableId") or ""),
                 "mappedFields": len(config.get("archiveFieldMap") or {}),
             },
+            "scheduler": {
+                "processEnabled": settings.scheduler_enabled,
+                "workflowEnabled": bool(config.get("enabled")),
+                "autoGenerateEnabled": bool(config.get("autoGenerateEnabled")),
+                "autoPreviewEnabled": bool(config.get("autoPreviewEnabled")),
+                "formalSendAlwaysManual": True,
+            },
             "basePath": settings.normalized_base_path,
             "directoryCache": directory,
         },

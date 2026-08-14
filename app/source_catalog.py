@@ -138,6 +138,9 @@ DEFAULT_WORKFLOW_CONFIG: dict[str, Any] = {
     "projectManagerRoster": [],
     "projectManagerTitleKeywords": ["项目经理"],
     "projectManagerFieldOverrides": {},
+    # Optional project background used to classify and summarize source facts.
+    # It is configuration context only and must never be presented as weekly progress.
+    "projectBaseline": [],
     # Archive write-back is opt-in because every Base can use different field
     # names/IDs. The map is semantic key -> exact fieldId or exact field name.
     "archiveWriteEnabled": False,
