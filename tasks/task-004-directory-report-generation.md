@@ -12,7 +12,7 @@
 - 工作目录：`D:\code_CPL\weekly_report_assistant`
 - 交付分支：`feature/task-004-directory-report-generation`
 - 基线：`origin/main` @ `149c4d08da7afe8f1e073d21c6a738d07076c541`
-- 当前状态：已提交未推送
+- 当前状态：已合入 main
 
 ## 数据库迁移
 
