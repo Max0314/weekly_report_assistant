@@ -5,13 +5,25 @@ import unittest
 from pathlib import Path
 
 from app.db import Database
-from app.services.rendering import report_html
+from app.services.rendering import _section_html, _summary_html, report_html
 from app.services.reports import ReportService
 from app.services.robot_commands import RobotCommandService
 from app.services.workflow_config import WorkflowConfigService
 
 
 class RenderingAndAuthTests(unittest.TestCase):
+    def test_inline_numbered_sections_are_split_without_breaking_decimals(self) -> None:
+        output = _section_html("1. 完成流程优化，周期压缩至3.5天。 2. 样机功耗达到2.3W。 3. 发布规范。")
+        self.assertEqual(3, output.count("<li>"))
+        self.assertIn("周期压缩至3.5天。", output)
+        self.assertIn("样机功耗达到2.3W。", output)
+        self.assertNotIn("1. 完成", output)
+
+    def test_summary_is_rendered_as_separate_sentences(self) -> None:
+        output = _summary_html("本周完成首轮交付。重点项目按计划推进！风险事项持续跟踪。")
+        self.assertEqual(3, output.count("<p>"))
+        self.assertIn("<p>重点项目按计划推进！</p>", output)
+
     def test_report_html_escapes_source_text(self) -> None:
         output = report_html({
             "id": 1, "title": "<script>alert(1)</script>", "version": 1,
@@ -21,6 +33,8 @@ class RenderingAndAuthTests(unittest.TestCase):
         self.assertNotIn("<script>alert(1)</script>", output)
         self.assertIn("&lt;script&gt;", output)
         self.assertIn("&lt;b&gt;事项&lt;/b&gt;", output)
+        self.assertIn('data-label="事项"', output)
+        self.assertIn("thead{display:none}", output)
 
     def test_sensitive_robot_command_requires_approver_and_configured_group(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

@@ -4,6 +4,7 @@ import hashlib
 import hmac
 import html
 import json
+import re
 import time
 from pathlib import Path
 from typing import Any
@@ -19,15 +20,42 @@ class RenderError(RuntimeError):
     pass
 
 
+_NUMBERED_ITEM_RE = re.compile(r"(?:^|(?<=[\s。；;！？!?：:]))(\d{1,2})[.、]\s+", re.MULTILINE)
+
+
+def _section_items(value: Any) -> list[str]:
+    text = str(value or "").strip()
+    if not text:
+        return []
+    matches = list(_NUMBERED_ITEM_RE.finditer(text))
+    numbers = [int(match.group(1)) for match in matches]
+    if len(matches) >= 2 and numbers[0] == 1 and all(
+        current == previous + 1 for previous, current in zip(numbers, numbers[1:])
+    ):
+        return [
+            text[match.end() : matches[index + 1].start() if index + 1 < len(matches) else len(text)].strip()
+            for index, match in enumerate(matches)
+            if text[match.end() : matches[index + 1].start() if index + 1 < len(matches) else len(text)].strip()
+        ]
+    lines = [line.strip() for line in text.splitlines() if line.strip()]
+    return [re.sub(r"^[\-•*]\s*", "", line) for line in lines]
+
+
 def _section_html(value: Any) -> str:
-    lines = [line.strip() for line in str(value or "").splitlines() if line.strip()]
-    if not lines:
+    items = _section_items(value)
+    if not items:
         return '<p class="empty">暂无</p>'
-    items = []
-    for line in lines:
-        normalized = line[1:].strip() if line.startswith(("-", "•")) else line
-        items.append(f"<li>{html.escape(normalized)}</li>")
-    return f"<ul>{''.join(items)}</ul>"
+    return f'<ol class="section-list">{"".join(f"<li>{html.escape(item)}</li>" for item in items)}</ol>'
+
+
+def _summary_html(value: Any) -> str:
+    text = str(value or "").strip()
+    if not text:
+        return '<p class="empty">暂无总结</p>'
+    sentences = []
+    for line in (line.strip() for line in text.splitlines() if line.strip()):
+        sentences.extend(part.strip() for part in re.findall(r"[^。！？!?]+[。！？!?]*", line) if part.strip())
+    return "".join(f"<p>{html.escape(sentence)}</p>" for sentence in sentences)
 
 
 def report_html(report: dict[str, Any]) -> str:
@@ -40,12 +68,12 @@ def report_html(report: dict[str, Any]) -> str:
         for name, count in (metrics.get("byCategory") or {}).items()
     )
     source_rows = "".join(
-        "<tr>"
-        f"<td>{html.escape(str(item.get('category') or ''))}</td>"
-        f"<td>{html.escape(str(item.get('title') or ''))}</td>"
-        f"<td>{html.escape(str(item.get('status') or '-'))}</td>"
-        f"<td>{html.escape('、'.join(item.get('productManagerNames') or item.get('projectManagerNames') or []))}</td>"
-        f"<td>{html.escape(str(item.get('dueAt') or '-').split('T')[0])}</td>"
+        '<tr class="fact-row">'
+        f'<td class="fact-category" data-label="类别">{html.escape(str(item.get("category") or "-"))}</td>'
+        f'<td class="fact-title" data-label="事项">{html.escape(str(item.get("title") or "-"))}</td>'
+        f'<td class="fact-status" data-label="状态">{html.escape(str(item.get("status") or "-"))}</td>'
+        f'<td data-label="负责人">{html.escape("、".join(item.get("productManagerNames") or item.get("projectManagerNames") or []) or "-")}</td>'
+        f'<td data-label="截止">{html.escape(str(item.get("dueAt") or "-").split("T")[0])}</td>'
         "</tr>"
         for item in sources[:80]
     )
@@ -60,14 +88,47 @@ def report_html(report: dict[str, Any]) -> str:
 .stats{{display:grid;grid-template-columns:repeat(5,1fr);gap:16px;margin:24px 0}}
 .stat,.metric,.card{{background:#fff;border:1px solid #dce5ef;border-radius:18px;box-shadow:0 8px 24px rgba(23,59,104,.06)}}
 .stat{{padding:20px}} .stat span,.metric span{{display:block;color:#5d6c80;font-size:15px}} .stat strong{{font-size:34px;color:#173b68}}
-.lead{{padding:26px 30px;background:#fff;border-left:8px solid #0f8a82;border-radius:18px;font-size:22px;line-height:1.7}}
-.grid{{display:grid;grid-template-columns:1fr 1fr;gap:20px;margin-top:24px}} .card{{padding:26px 30px}}
-.card h2{{font-size:25px;margin:0 0 16px;color:#173b68}} ul{{padding-left:24px;margin:0}} li{{font-size:18px;line-height:1.65;margin:7px 0}}
+.lead{{padding:26px 30px;background:#fff;border-left:8px solid #0f8a82;border-radius:18px;font-size:20px;line-height:1.75}}
+.lead p{{margin:0}} .lead p+p{{margin-top:8px}}
+.grid{{display:grid;grid-template-columns:1fr 1fr;gap:20px;margin-top:24px;align-items:start}} .card{{padding:26px 30px}}
+.grid .card:last-child{{grid-column:1/-1}}
+.card h2{{font-size:25px;margin:0 0 16px;color:#173b68}}
+.section-list{{list-style:none;counter-reset:section-item;padding:0;margin:0}}
+.section-list li{{counter-increment:section-item;display:grid;grid-template-columns:28px minmax(0,1fr);gap:10px;font-size:18px;line-height:1.65;margin:12px 0}}
+.section-list li::before{{content:counter(section-item);display:flex;align-items:center;justify-content:center;width:24px;height:24px;margin-top:3px;border-radius:50%;background:#e8f1f8;color:#24689d;font-size:13px;font-weight:700}}
 .risk h2{{color:#b24b2d}} .metrics{{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin:24px 0}}
 .metric{{padding:16px}} .metric strong{{font-size:25px;color:#24689d}}
-.table-card{{margin-top:24px;padding:26px 30px}} table{{width:100%;border-collapse:collapse}} th,td{{padding:13px 12px;border-bottom:1px solid #e4eaf1;text-align:left;font-size:15px;vertical-align:top}} th{{color:#526276;background:#f3f6fa}}
+.table-card{{margin-top:24px;padding:26px 30px}} .table-card h2{{margin-bottom:18px}}
+table{{width:100%;border-collapse:collapse;table-layout:fixed}} th,td{{padding:13px 12px;border-bottom:1px solid #e4eaf1;text-align:left;font-size:15px;line-height:1.55;vertical-align:top;overflow-wrap:anywhere}} th{{color:#526276;background:#f3f6fa}}
+th:nth-child(1){{width:18%}} th:nth-child(3){{width:11%}} th:nth-child(4){{width:12%}} th:nth-child(5){{width:11%}}
+.fact-category,.fact-status{{color:#526276}} .fact-title{{font-weight:600;color:#1c3656}}
 .foot{{margin-top:26px;color:#718096;text-align:right;font-size:14px}} .empty{{color:#8492a6}}
-@media(max-width:900px){{.page{{width:100%;padding:18px}}.stats{{grid-template-columns:repeat(2,1fr)}}.grid{{grid-template-columns:1fr}}}}
+@media(max-width:900px){{
+  .page{{width:100%;padding:14px}}
+  .hero{{padding:22px 20px;border-radius:20px}} .hero h1{{font-size:29px;line-height:1.22;margin-bottom:9px}} .hero p{{font-size:14px;line-height:1.5}}
+  .stats{{grid-template-columns:repeat(3,1fr);gap:8px;margin:14px 0}}
+  .stat{{padding:12px;border-radius:14px}} .stat span{{font-size:12px}} .stat strong{{font-size:24px;line-height:1.2}}
+  .lead{{padding:17px 18px;border-left-width:5px;border-radius:15px;font-size:16px;line-height:1.75}} .lead p+p{{margin-top:7px}}
+  .metrics{{grid-template-columns:repeat(3,1fr);gap:8px;margin:14px 0}}
+  .metric{{padding:12px;border-radius:14px}} .metric span{{font-size:12px;line-height:1.35}} .metric strong{{font-size:21px}}
+  .grid{{grid-template-columns:1fr;gap:12px;margin-top:14px}} .grid .card:last-child{{grid-column:auto}}
+  .card{{padding:18px;border-radius:15px}} .card h2{{font-size:20px;margin-bottom:12px}}
+  .section-list li{{grid-template-columns:24px minmax(0,1fr);gap:8px;font-size:15.5px;line-height:1.7;margin:10px 0}}
+  .section-list li::before{{width:21px;height:21px;margin-top:3px;font-size:11px}}
+  .table-card{{margin-top:14px;padding:18px}} .table-card h2{{font-size:20px;margin-bottom:12px}}
+  table,tbody,tr,td{{display:block;width:100%}} thead{{display:none}}
+  .fact-row{{margin-bottom:10px;padding:12px 13px;border:1px solid #e1e8f0;border-radius:13px;background:#f8fafc}}
+  .fact-row:last-child{{margin-bottom:0}}
+  .fact-row td{{display:grid;grid-template-columns:66px minmax(0,1fr);gap:9px;padding:6px 0;border:0;font-size:14px;line-height:1.55;overflow-wrap:break-word;word-break:normal}}
+  .fact-row td::before{{content:attr(data-label);color:#7a8799;font-size:12px;font-weight:500}}
+  .fact-row .fact-title{{font-size:15px}}
+  .fact-category,.fact-status{{color:#1c5e86;font-weight:600}}
+  .foot{{margin-top:16px;font-size:11px;line-height:1.6;text-align:left}}
+}}
+@media(max-width:520px){{
+  .page{{padding:10px}} .hero{{padding:20px 17px}} .hero h1{{font-size:26px}}
+  .metrics{{grid-template-columns:repeat(2,1fr)}}
+}}
 </style></head><body><main class="page">
 <section class="hero"><h1>{html.escape(str(report.get('title') or '产品与项目管理周报'))}</h1><p>{html.escape(str(window.get('label') or report.get('periodKey') or ''))} · v{int(report.get('version') or 0)}</p></section>
 <section class="stats">
@@ -77,7 +138,7 @@ def report_html(report: dict[str, Any]) -> str:
 <div class="stat"><span>逾期事项</span><strong>{int(metrics.get('overdueCount') or 0)}</strong></div>
 <div class="stat"><span>高优先级</span><strong>{int(metrics.get('highPriorityCount') or 0)}</strong></div>
 </section>
-<section class="lead">{html.escape(str(sections.get('executiveSummary') or '暂无总结'))}</section>
+<section class="lead">{_summary_html(sections.get('executiveSummary'))}</section>
 <section class="metrics">{category_cards}</section>
 <section class="grid">
 <article class="card"><h2>产品管理进展</h2>{_section_html(sections.get('productHighlights'))}</article>
@@ -86,7 +147,7 @@ def report_html(report: dict[str, Any]) -> str:
 <article class="card"><h2>下周计划</h2>{_section_html(sections.get('nextPlans'))}</article>
 <article class="card"><h2>需协调与支持</h2>{_section_html(sections.get('supportNeeds'))}</article>
 </section>
-<section class="card table-card"><h2>本周事实清单</h2><table><thead><tr><th>类别</th><th>事项</th><th>状态</th><th>负责人</th><th>截止</th></tr></thead><tbody>{source_rows or '<tr><td colspan="5">暂无</td></tr>'}</tbody></table></section>
+<section class="card table-card"><h2>本周事实清单</h2><table><thead><tr><th>类别</th><th>事项</th><th>状态</th><th>负责人</th><th>截止</th></tr></thead><tbody>{source_rows or '<tr><td colspan="5" class="empty">暂无</td></tr>'}</tbody></table></section>
 <div class="foot">由周报助手根据 AI 多维表快照生成；统计数字由程序计算，AI 仅用于归纳文案。</div>
 </main></body></html>"""
 
