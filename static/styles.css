@@ -21,8 +21,8 @@
 }
 
 * { box-sizing: border-box; }
-html { min-height: 100%; background: var(--canvas); scroll-behavior: smooth; }
-body { margin: 0; min-height: 100vh; color: var(--ink); background: var(--canvas); font-family: Inter, "Microsoft YaHei", "PingFang SC", system-ui, sans-serif; }
+html { min-height: 100%; overflow-x: hidden; background: var(--canvas); scroll-behavior: smooth; }
+body { margin: 0; min-height: 100vh; overflow-x: hidden; color: var(--ink); background: var(--canvas); font-family: Inter, "Microsoft YaHei", "PingFang SC", system-ui, sans-serif; }
 button, input, select, textarea { font: inherit; }
 button { border: 0; border-radius: 10px; padding: 10px 15px; color: #fff; background: var(--blue); font-size: 14px; font-weight: 700; cursor: pointer; transition: transform .18s ease, box-shadow .18s ease, background .18s ease, opacity .18s ease; }
 button:hover:not(:disabled) { background: var(--blue-dark); box-shadow: 0 7px 18px rgba(40, 100, 220, .18); transform: translateY(-1px); }
