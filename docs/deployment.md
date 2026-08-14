@@ -93,14 +93,17 @@ https://neoflow-cn.neo-net.com/weekly-assistant/api/dingtalk/robot/callback?toke
 - `weekly_report.archive_status/archive_record_id/archive_error TEXT NOT NULL DEFAULT ''`
 - `weekly_report.archive_attempted_at/archived_at TEXT NOT NULL DEFAULT ''`
 - `weekly_report.archive_payload_json TEXT NOT NULL DEFAULT '{}'`
+- `employee_cache` 增加工号、主部门 ID、任职来源、负责人标志与负责人范围字段
+- 新建 `organization_cache` 和 `employee_org_relation_cache` 两张可重建缓存表
 
-影响：已有周报内容、状态和发送日志不变；新增归档字段初值为空，不会自动回写历史周报。旧周报没有历史事实快照时继续按原兼容逻辑读取源记录，新生成周报保存生成时事实与覆盖清单。
+影响：已有周报内容、状态和发送日志不变；新增归档字段初值为空，不会自动回写历史周报。旧周报没有历史事实快照时继续按原兼容逻辑读取源记录，新生成周报保存生成时事实与覆盖清单。员工新增字段初值为空，下一次目录同步会事务性填充员工、组织和关系缓存，不修改 bi_center 数据。
 
 ## 回滚
 
 1. 部署前备份 `runtime/weekly_report_assistant.db` 和 `runtime/reports/`。
 2. 停止当前容器，以旧镜像重建；不要删除或覆盖 `runtime/`。
-3. 旧版本会忽略新增列，因此应用回滚无需删除列。
-4. 如需物理删除新增列，应在数据库副本上重建表并验证后替换；不在生产库上直接执行破坏性变更。
+3. 旧版本会忽略新增列和缓存表，因此应用回滚无需删除结构。
+4. 如需彻底回滚目录缓存结构，停服并备份 SQLite 后，可在数据库副本中删除 `employee_org_relation_cache`、`organization_cache`；员工新增列可保留为空。
+5. 如需物理删除新增列，应在数据库副本上重建表并验证后替换；不在生产库上直接执行破坏性变更。
 
 撤回钉钉消息依赖发送时取得的 `processQueryKey`，超出钉钉允许窗口时可能无法撤回。部分撤回失败时周报进入 `retryable_error`，不会错误标记为全部撤回。
