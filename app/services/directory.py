@@ -308,6 +308,10 @@ class DirectoryService:
         rows = self.db.fetch_all("SELECT * FROM employee_cache WHERE is_active=1 AND user_id<>''")
         return {str(item.get("user_id") or ""): item for item in rows if item.get("user_id")}
 
+    def lookup_by_union_id(self) -> dict[str, dict[str, Any]]:
+        rows = self.db.fetch_all("SELECT * FROM employee_cache WHERE is_active=1 AND union_id<>''")
+        return {str(item.get("union_id") or ""): item for item in rows if item.get("union_id")}
+
     def cache_status(self) -> dict[str, Any]:
         row = self.db.fetch_one(
             """

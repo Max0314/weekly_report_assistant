@@ -32,17 +32,34 @@ def _text(value: Any) -> str:
     return str(value).strip()
 
 
-def _user_ids(value: Any) -> list[str]:
+def _people(
+    value: Any,
+    *,
+    employees_by_user_id: dict[str, dict[str, Any]],
+    employees_by_union_id: dict[str, dict[str, Any]],
+) -> tuple[list[str], list[str], list[str]]:
     values = value if isinstance(value, list) else [value]
-    result: list[str] = []
+    user_ids: list[str] = []
+    names: list[str] = []
+    display_names: list[str] = []
     for item in values:
-        if isinstance(item, dict):
-            user_id = str(item.get("userId") or item.get("staffId") or item.get("id") or "").strip()
-        else:
-            user_id = ""
-        if user_id and user_id not in result:
-            result.append(user_id)
-    return result
+        if not isinstance(item, dict):
+            continue
+        user_id = str(item.get("userId") or item.get("staffId") or item.get("id") or "").strip()
+        union_id = str(item.get("unionId") or "").strip()
+        cell_name = str(item.get("name") or item.get("label") or "").strip()
+        employee = employees_by_user_id.get(user_id, {}) if user_id else {}
+        if not employee and union_id:
+            employee = employees_by_union_id.get(union_id, {})
+            user_id = str(employee.get("user_id") or "").strip()
+        employee_name = str(employee.get("employee_name") or "").strip()
+        display_name = employee_name or cell_name
+        if display_name and display_name not in display_names:
+            display_names.append(display_name)
+        if user_id and user_id not in user_ids:
+            user_ids.append(user_id)
+            names.append(display_name or user_id)
+    return user_ids, names, display_names
 
 
 def _date_text(value: Any) -> str:
@@ -108,10 +125,15 @@ class SourceCollector:
         spec: dict[str, Any],
         result: TableResult,
         record: dict[str, Any],
-        employees: dict[str, dict[str, Any]],
+        employees_by_user_id: dict[str, dict[str, Any]],
+        employees_by_union_id: dict[str, dict[str, Any]],
     ) -> dict[str, Any]:
         values = self._field_values(result, record)
-        product_user_ids = _user_ids(_first(values, spec.get("productManagerFields") or spec.get("userFields") or []))
+        product_user_ids, product_names, product_display_names = _people(
+            _first(values, spec.get("productManagerFields") or spec.get("userFields") or []),
+            employees_by_user_id=employees_by_user_id,
+            employees_by_union_id=employees_by_union_id,
+        )
         overrides = self.config_service.get().get("projectManagerFieldOverrides") or {}
         override_fields = overrides.get(str(spec.get("tableId") or ""), []) if isinstance(overrides, dict) else []
         if isinstance(override_fields, str):
@@ -119,18 +141,20 @@ class SourceCollector:
         project_fields = [*(spec.get("projectManagerFields") or []), *(
             override_fields if isinstance(override_fields, list) else []
         )]
-        project_user_ids = _user_ids(_first(values, project_fields))
+        project_user_ids, project_names, _ = _people(
+            _first(values, project_fields),
+            employees_by_user_id=employees_by_user_id,
+            employees_by_union_id=employees_by_union_id,
+        )
         if spec.get("projectView") and not project_user_ids:
             project_roster = {
                 str(item.get("userId") or "") for item in self.config_service.get().get("projectManagerRoster") or []
                 if item.get("enabled") is not False
             }
             project_user_ids = [item for item in product_user_ids if item in project_roster]
-        product_names = [str(employees.get(item, {}).get("employee_name") or item) for item in product_user_ids]
-        project_names = [str(employees.get(item, {}).get("employee_name") or item) for item in project_user_ids]
         title = _join(values, spec.get("titleFields") or [])
         if spec.get("roster"):
-            title = "、".join(product_names)
+            title = "、".join(product_display_names)
         status = _text(_first(values, spec.get("statusFields") or []))
         priority = _text(_first(values, spec.get("priorityFields") or []))
         event_at = _date_text(_first(values, spec.get("eventDateFields") or []))
@@ -179,8 +203,18 @@ class SourceCollector:
         return normalized
 
     def _store_table(self, spec: dict[str, Any], result: TableResult, *, seen_at: str) -> dict[str, int]:
-        employees = self.directory.lookup_by_user_id()
-        normalized = [self._normalize_record(spec, result, record, employees) for record in result.records]
+        employees_by_user_id = self.directory.lookup_by_user_id()
+        employees_by_union_id = self.directory.lookup_by_union_id()
+        normalized = [
+            self._normalize_record(
+                spec,
+                result,
+                record,
+                employees_by_user_id,
+                employees_by_union_id,
+            )
+            for record in result.records
+        ]
         changed = 0
         initial_imported = 0
         seen_ids = {item["record_id"] for item in normalized}

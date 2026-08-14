@@ -18,6 +18,11 @@ class FakeDirectory:
             "u-project": {"employee_name": "项目乙"},
         }
 
+    def lookup_by_union_id(self):
+        return {
+            "union-product": {"user_id": "u-product", "employee_name": "产品甲"},
+        }
+
 
 class CollectorTests(unittest.TestCase):
     def setUp(self) -> None:
@@ -81,6 +86,18 @@ class CollectorTests(unittest.TestCase):
         row = self.db.fetch_one("SELECT changed_at FROM source_record WHERE record_id='record-1'")
         self.assertEqual(0, stored["changed"])
         self.assertEqual("2026-07-01T09:00:00+08:00", row["changed_at"])
+
+    def test_resolves_aitable_union_id_to_cached_employee_user_id(self) -> None:
+        result = self.result()
+        result.records[0]["cells"]["f3"] = [
+            {"unionId": "union-product", "name": "别名.产品甲"}
+        ]
+        self.collector._store_table(
+            self.spec, result, seen_at="2026-08-13T10:00:00+08:00"
+        )
+        row = self.db.fetch_one("SELECT * FROM source_record WHERE record_id='record-1'")
+        self.assertEqual(["u-product"], json.loads(row["product_manager_user_ids_json"]))
+        self.assertEqual(["产品甲"], json.loads(row["product_manager_names_json"]))
 
 
 if __name__ == "__main__":
