@@ -234,10 +234,33 @@ def sync_directory(actor: str = Depends(_admin_token)) -> dict[str, Any]:
 @router.get("/api/directory")
 def directory_search(
     query: str = Query(default="", max_length=100),
+    organization_key: str = Query(default="", max_length=300),
+    leaders_only: bool = Query(default=False),
     limit: int = Query(default=100, ge=1, le=500),
     _: str = Depends(_admin_token),
 ) -> dict[str, Any]:
-    return {"items": directory_service.search(query=query, limit=limit)}
+    return {
+        "items": directory_service.search(
+            query=query,
+            organization_key=organization_key,
+            leaders_only=leaders_only,
+            limit=limit,
+        )
+    }
+
+
+@router.get("/api/directory/organizations")
+def organization_search(
+    query: str = Query(default="", max_length=100),
+    organization_type: str = Query(default="", pattern="^(|department|biz_group)$"),
+    limit: int = Query(default=100, ge=1, le=500),
+    _: str = Depends(_admin_token),
+) -> dict[str, Any]:
+    return {
+        "items": directory_service.search_organizations(
+            query=query, organization_type=organization_type, limit=limit
+        )
+    }
 
 
 @router.post("/api/scheduler/tick")

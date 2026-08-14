@@ -37,16 +37,53 @@ CREATE TABLE IF NOT EXISTS employee_cache (
     corp_id TEXT NOT NULL DEFAULT '',
     user_id TEXT NOT NULL DEFAULT '',
     union_id TEXT NOT NULL DEFAULT '',
+    job_number TEXT NOT NULL DEFAULT '',
     employee_name TEXT NOT NULL DEFAULT '',
     title TEXT NOT NULL DEFAULT '',
+    primary_dept_id TEXT NOT NULL DEFAULT '',
     department_name TEXT NOT NULL DEFAULT '',
     biz_group_name TEXT NOT NULL DEFAULT '',
+    email_normalized TEXT NOT NULL DEFAULT '',
+    affiliation_type TEXT NOT NULL DEFAULT '',
+    employment_status TEXT NOT NULL DEFAULT '',
+    primary_source TEXT NOT NULL DEFAULT '',
+    is_department_leader INTEGER NOT NULL DEFAULT 0,
+    is_biz_group_leader INTEGER NOT NULL DEFAULT 0,
+    is_company_leader INTEGER NOT NULL DEFAULT 0,
+    leader_roles_json TEXT NOT NULL DEFAULT '[]',
     is_active INTEGER NOT NULL DEFAULT 1,
     directory_version TEXT NOT NULL DEFAULT '',
     refreshed_at TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_employee_cache_user ON employee_cache(user_id);
 CREATE INDEX IF NOT EXISTS idx_employee_cache_name ON employee_cache(employee_name);
+
+CREATE TABLE IF NOT EXISTS organization_cache (
+    organization_key TEXT PRIMARY KEY,
+    organization_type TEXT NOT NULL,
+    organization_id TEXT NOT NULL DEFAULT '',
+    organization_name TEXT NOT NULL,
+    member_count INTEGER NOT NULL DEFAULT 0,
+    leader_count INTEGER NOT NULL DEFAULT 0,
+    directory_version TEXT NOT NULL DEFAULT '',
+    refreshed_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_organization_cache_name ON organization_cache(organization_name);
+CREATE INDEX IF NOT EXISTS idx_organization_cache_type ON organization_cache(organization_type, organization_name);
+
+CREATE TABLE IF NOT EXISTS employee_org_relation_cache (
+    employee_key TEXT NOT NULL,
+    organization_key TEXT NOT NULL,
+    relation_type TEXT NOT NULL,
+    is_primary INTEGER NOT NULL DEFAULT 1,
+    is_leader INTEGER NOT NULL DEFAULT 0,
+    directory_version TEXT NOT NULL DEFAULT '',
+    refreshed_at TEXT NOT NULL,
+    PRIMARY KEY(employee_key, organization_key),
+    FOREIGN KEY(employee_key) REFERENCES employee_cache(employee_key) ON DELETE CASCADE,
+    FOREIGN KEY(organization_key) REFERENCES organization_cache(organization_key) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_employee_org_relation_org ON employee_org_relation_cache(organization_key, is_leader);
 
 CREATE TABLE IF NOT EXISTS source_record (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -208,6 +245,29 @@ class Database:
         for column, definition in additions.items():
             if column not in weekly_columns:
                 connection.execute(f"ALTER TABLE weekly_report ADD COLUMN {column} {definition}")
+
+        employee_columns = {
+            str(row["name"])
+            for row in connection.execute("PRAGMA table_info(employee_cache)").fetchall()
+        }
+        employee_additions = {
+            "job_number": "TEXT NOT NULL DEFAULT ''",
+            "primary_dept_id": "TEXT NOT NULL DEFAULT ''",
+            "email_normalized": "TEXT NOT NULL DEFAULT ''",
+            "affiliation_type": "TEXT NOT NULL DEFAULT ''",
+            "employment_status": "TEXT NOT NULL DEFAULT ''",
+            "primary_source": "TEXT NOT NULL DEFAULT ''",
+            "is_department_leader": "INTEGER NOT NULL DEFAULT 0",
+            "is_biz_group_leader": "INTEGER NOT NULL DEFAULT 0",
+            "is_company_leader": "INTEGER NOT NULL DEFAULT 0",
+            "leader_roles_json": "TEXT NOT NULL DEFAULT '[]'",
+        }
+        for column, definition in employee_additions.items():
+            if column not in employee_columns:
+                connection.execute(f"ALTER TABLE employee_cache ADD COLUMN {column} {definition}")
+        connection.execute(
+            "CREATE INDEX IF NOT EXISTS idx_employee_cache_department ON employee_cache(primary_dept_id, department_name)"
+        )
 
     @contextmanager
     def connect(self) -> Iterator[sqlite3.Connection]:

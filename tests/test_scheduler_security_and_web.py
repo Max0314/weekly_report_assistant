@@ -92,6 +92,34 @@ class SchedulerSecurityAndWebTests(unittest.TestCase):
         self.assertIn("archive_record_id", columns)
         self.assertIn("archive_payload_json", columns)
 
+    def test_additive_migration_upgrades_an_existing_employee_cache(self) -> None:
+        path = Path(self.temp_dir.name) / "old-directory.db"
+        connection = sqlite3.connect(path)
+        connection.execute(
+            """
+            CREATE TABLE employee_cache (
+              employee_key TEXT PRIMARY KEY, corp_id TEXT, user_id TEXT, union_id TEXT,
+              employee_name TEXT, title TEXT, department_name TEXT, biz_group_name TEXT,
+              is_active INTEGER, directory_version TEXT, refreshed_at TEXT
+            )
+            """
+        )
+        connection.commit()
+        connection.close()
+        database = Database(path)
+        database.initialize()
+        with database.connect() as upgraded:
+            columns = {
+                str(row["name"])
+                for row in upgraded.execute("PRAGMA table_info(employee_cache)")
+            }
+            organization_table = upgraded.execute(
+                "SELECT name FROM sqlite_master WHERE type='table' AND name='organization_cache'"
+            ).fetchone()
+        self.assertIn("primary_dept_id", columns)
+        self.assertIn("leader_roles_json", columns)
+        self.assertIsNotNone(organization_table)
+
     def test_production_callback_fails_closed_without_a_token(self) -> None:
         test_app = FastAPI()
         test_app.include_router(router)

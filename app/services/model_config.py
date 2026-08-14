@@ -33,8 +33,8 @@ PROVIDERS = [
         "label": "DashScope / Qwen",
         "description": "阿里云百炼 OpenAI 兼容接口，自动关闭 Qwen thinking。",
         "defaultApiBase": "https://dashscope.aliyuncs.com/compatible-mode/v1",
-        "defaultModel": "qwen3.6-plus-2026-04-02",
-        "defaultModels": ["qwen3.6-plus-2026-04-02", "qwen3.6-plus", "qwen3-coder-plus"],
+        "defaultModel": "qwen3.7-plus",
+        "defaultModels": ["qwen3.7-plus", "qwen3.7-max", "qwen3.6-plus", "qwen3-coder-plus"],
     },
     {
         "value": "compatible",
