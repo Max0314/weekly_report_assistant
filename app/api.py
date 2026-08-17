@@ -123,6 +123,12 @@ def readiness(_: str = Depends(_admin_token)) -> dict[str, Any]:
             "dingtalkApp": settings.dingtalk_configured,
             "aiTable": settings.aitable_configured,
             "biCenter": settings.bi_center_configured,
+            "biCenterDetail": {
+                "configured": settings.bi_center_configured,
+                "baseUrl": settings.bi_center_base_url.strip(),
+                "tokenConfigured": bool(settings.bi_center_api_token.strip()),
+                "accessMode": "read_only",
+            },
             "aiSummary": ai_summary_ready,
             "aiSummaryDetail": {
                 "configured": model_config_service.configured(),

@@ -61,11 +61,11 @@ textarea { min-height: 112px; resize: vertical; line-height: 1.6; }
 .auth-popover p { margin: 10px 0 0; color: var(--muted); font-size: 11px; line-height: 1.5; }
 
 .app-sidebar { grid-area: sidebar; position: sticky; top: var(--header-height); align-self: start; display: flex; flex-direction: column; height: calc(100vh - var(--header-height)); overflow-y: auto; border-right: 1px solid var(--line); background: rgba(255, 255, 255, .88); }
-.brand { display: flex; align-items: center; gap: 11px; margin: 20px 16px 14px; padding: 15px; border-radius: 16px; color: #fff; background: linear-gradient(145deg, #1e4fba, #3675e6); box-shadow: 0 15px 30px rgba(40, 100, 220, .2); }
-.brand-mark { display: grid; place-items: center; width: 38px; height: 38px; flex: 0 0 38px; color: #245cc9; border-radius: 12px; background: rgba(255, 255, 255, .95); font-size: 18px; font-weight: 900; }
+.brand { display: flex; align-items: center; gap: 11px; margin: 18px 22px 3px; padding: 0 0 17px; color: var(--ink); border-bottom: 1px solid var(--soft-line); cursor: default; pointer-events: none; user-select: none; }
+.brand-mark { display: grid; place-items: center; width: 34px; height: 34px; flex: 0 0 34px; color: #245cc9; border: 1px solid #d8e5fb; border-radius: 10px; background: var(--blue-soft); font-size: 16px; font-weight: 900; }
 .brand strong, .brand span { display: block; }
-.brand strong { font-size: 15px; }
-.brand span { margin-top: 3px; color: rgba(255, 255, 255, .78); font-size: 11px; }
+.brand strong { font-size: 14px; line-height: 1.2; }
+.brand span { margin-top: 4px; color: #8a95a7; font-size: 10px; }
 .sidebar-nav { display: flex; flex-direction: column; padding: 0 13px 18px; }
 .nav-group-label { margin: 18px 10px 7px; color: #9aa4b5; font-size: 11px; font-weight: 800; letter-spacing: .1em; }
 .nav-item { display: flex; align-items: center; gap: 11px; min-height: 44px; margin-bottom: 3px; padding: 8px 12px; color: #5e687a; border: 1px solid transparent; border-radius: 12px; text-decoration: none; font-size: 14px; font-weight: 650; transition: all .18s ease; }
@@ -184,6 +184,19 @@ textarea { min-height: 112px; resize: vertical; line-height: 1.6; }
 .two-cols { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 .full-span { grid-column: 1 / -1; }
 .top-gap { margin-top: 18px; }
+.field-help { display: block; margin-top: 6px; color: #8994a6; font-size: 10.5px; font-weight: 400; line-height: 1.5; }
+.field-help code { color: #63718a; font-size: 10px; }
+.directory-status { display: grid; grid-template-columns: .8fr .9fr 1.15fr 1.65fr; gap: 11px; }
+.directory-status article { min-width: 0; padding: 15px; border: 1px solid var(--line); border-radius: 13px; background: #fafbfd; }
+.directory-status span, .directory-status strong, .directory-status small { display: block; }
+.directory-status span { color: var(--muted); font-size: 11px; }
+.directory-status strong { margin-top: 7px; color: #213c69; font-size: 14px; overflow-wrap: anywhere; }
+.directory-status small { margin-top: 5px; color: #8b96a7; font-size: 10px; line-height: 1.45; overflow-wrap: anywhere; }
+.field-guide { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 9px; }
+.field-guide > div { min-width: 0; padding: 12px 13px; border-left: 3px solid #cbdcf8; border-radius: 0 10px 10px 0; background: #f7f9fc; }
+.field-guide code, .field-guide strong { color: #31588f; font-size: 11px; font-weight: 750; }
+.field-guide p { margin: 4px 0 0; color: var(--muted); font-size: 10.5px; line-height: 1.5; }
+.compact-guide { grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); margin-bottom: 16px; }
 .toggle-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 11px; margin-top: 18px; }
 .toggle-card { display: flex; align-items: flex-start; gap: 10px; min-height: 82px; padding: 14px; color: var(--ink); border: 1px solid var(--line); border-radius: 13px; background: #fafbfd; cursor: pointer; }
 .toggle-card input { width: 17px; min-width: 17px; height: 17px; margin: 2px 0 0; accent-color: var(--blue); }
@@ -240,7 +253,7 @@ textarea { min-height: 112px; resize: vertical; line-height: 1.6; }
 .target-chip { display: inline-flex; align-items: center; gap: 6px; padding: 6px 7px 6px 10px; color: #3d526f; border: 1px solid #d8e2ef; border-radius: 999px; background: #fff; font-size: 11px; }
 .target-chip button { width: 20px; height: 20px; padding: 0; color: #8a96a8; border-radius: 50%; background: #eef1f5; font-size: 13px; }
 .target-chip button:hover { color: var(--danger); background: var(--danger-soft); box-shadow: none; transform: none; }
-.group-target-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 15px; }
+.group-target-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 15px; margin-top: 16px; }
 .group-editor { padding: 16px; border: 1px solid var(--line); border-radius: 15px; background: #fafbfd; }
 .group-editor-head { display: flex; align-items: center; justify-content: space-between; gap: 14px; margin-bottom: 12px; }
 .group-editor-head strong, .group-editor-head span { display: block; }
@@ -302,6 +315,7 @@ dialog::backdrop { background: rgba(20, 29, 44, .58); backdrop-filter: blur(3px)
   .checks { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .page-hero, .report-toolbar { align-items: stretch; flex-direction: column; }
   .four-cols, .three-cols, .two-cols, .section-editor-grid { grid-template-columns: 1fr; }
+  .directory-status, .field-guide { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .full-span { grid-column: auto; }
   .report { grid-template-columns: 1fr; }
   .report .actions { justify-content: flex-start; max-width: none; }
@@ -322,6 +336,7 @@ dialog::backdrop { background: rgba(20, 29, 44, .58); backdrop-filter: blur(3px)
   .hero-copy h2 { font-size: 27px; }
   .hero-copy .actions button { flex: 1 1 auto; }
   .metric-grid, .checks, .toggle-grid { grid-template-columns: 1fr; }
+  .directory-status, .field-guide { grid-template-columns: 1fr; }
   .toolbar-filters { flex-direction: column; }
   .toolbar-filters select, .toolbar-filters input { width: 100%; }
   .segmented { display: grid; grid-template-columns: repeat(3, 1fr); width: 100%; }

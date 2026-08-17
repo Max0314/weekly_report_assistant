@@ -10,11 +10,15 @@ from unittest.mock import patch
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from app.api import router
+from app.api import readiness, router
 from app.config import Settings, settings
 from app.db import Database
+from app.services.directory import directory_service
 from app.services.delivery import DeliveryService
+from app.services.model_config import model_config_service
 from app.services.scheduler import SchedulerService
+from app.services.scheduler import scheduler_service
+from app.services.workflow_config import workflow_config_service
 from app.time_utils import SHANGHAI, to_db
 
 
@@ -147,17 +151,49 @@ class SchedulerSecurityAndWebTests(unittest.TestCase):
         self.assertIn('id="projectRows"', html)
         self.assertIn('id="previewGroupTargets"', html)
         self.assertIn('id="section-executiveSummary"', html)
+        self.assertIn('aria-label="周报助手，产品与项目管理"', html)
+        self.assertIn('id="directoryEndpoint"', html)
+        self.assertIn('class="field-help"', html)
         self.assertIn("setRoute(routeFromHash())", script)
         self.assertIn('api("/api/config"', script)
         self.assertIn('api("/api/model-config"', script)
         self.assertIn('api("/api/model-config/test"', script)
-        self.assertIn("styles.css?v=20260814c", html)
-        self.assertIn("app.js?v=20260814c", html)
+        self.assertIn("styles.css?v=20260817a", html)
+        self.assertIn("app.js?v=20260817a", html)
         self.assertIn("proxy_pass http://127.0.0.1:39022;", nginx)
         self.assertNotIn("proxy_pass http://127.0.0.1:39022/;", nginx)
         self.assertIn(
             "proxy_pass http://127.0.0.1:39022/weekly-assistant/static/;", nginx
         )
+
+    def test_readiness_exposes_safe_bi_center_directory_metadata(self) -> None:
+        workflow = {
+            "previewGroupTargets": [],
+            "previewPersonalTargets": [{"userId": "u"}],
+            "formalGroupTargets": [],
+            "formalPersonalTargets": [{"userId": "u"}],
+            "approverTargets": [{"userId": "u"}],
+            "archiveWriteEnabled": False,
+            "archiveTableId": "",
+            "archiveFieldMap": {},
+            "sendGroupImages": False,
+            "enabled": True,
+            "autoGenerateEnabled": False,
+            "autoPreviewEnabled": False,
+        }
+        with patch.object(settings, "bi_center_base_url", "https://example.test/bi_center"), patch.object(
+            settings, "bi_center_api_token", "secret"
+        ), patch.object(directory_service, "cache_status", return_value={"count": 7}), patch.object(
+            workflow_config_service, "get", return_value=workflow
+        ), patch.object(scheduler_service, "_source_snapshot_ready", return_value=(True, "ok")), patch.object(
+            model_config_service, "test_status", return_value={"ok": True}
+        ), patch.object(model_config_service, "configured", return_value=True):
+            payload = readiness("admin")
+        detail = payload["checks"]["biCenterDetail"]
+        self.assertEqual("https://example.test/bi_center", detail["baseUrl"])
+        self.assertTrue(detail["tokenConfigured"])
+        self.assertEqual("read_only", detail["accessMode"])
+        self.assertNotIn("secret", str(detail))
 
 
 if __name__ == "__main__":

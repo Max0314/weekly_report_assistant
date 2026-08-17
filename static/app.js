@@ -117,6 +117,8 @@
     latestReadiness = data;
     const c = data.checks || {};
     const aiDetail = c.aiSummaryDetail || {};
+    const directoryDetail = c.biCenterDetail || {};
+    const directoryCache = c.directoryCache || {};
     $("#readiness").innerHTML = [
       checkCard("钉钉应用", c.dingtalkApp ? "ok" : "bad"),
       checkCard("AI 多维表", c.sourceData?.ready ? "ok" : "bad", c.sourceData?.reason || "最近同步成功"),
@@ -132,6 +134,13 @@
     footer.classList.toggle("ready", Boolean(data.ready));
     $("#sidebarReadyText").textContent = data.ready ? "业务链路已就绪" : "仍有待处理项";
     $("#sidebarReadyDetail").textContent = `人员 ${c.directoryCache?.count || 0} · 测试目标 ${c.deliveryTargets?.preview || 0}`;
+    $("#directoryConnectionState").textContent = directoryDetail.configured ? "已配置" : "未配置";
+    $("#directoryTokenState").textContent = directoryDetail.tokenConfigured ? "只读 Token 已配置" : "只读 Token 未配置";
+    $("#directoryCacheCount").textContent = `${directoryCache.count || 0} 人`;
+    $("#directoryOrganizationCount").textContent = `${directoryCache.organizationCount || 0} 个组织 · ${directoryCache.relationCount || 0} 条关系`;
+    $("#directoryVersion").textContent = directoryCache.directoryVersion || "尚未同步";
+    $("#directoryRefreshedAt").textContent = directoryCache.refreshedAt ? `刷新于 ${directoryCache.refreshedAt}` : "暂无刷新记录";
+    $("#directoryEndpoint").textContent = directoryDetail.baseUrl || "未配置";
     const scheduler = c.scheduler || {};
     $("#schedulerBanner").innerHTML = scheduler.processEnabled
       ? `<span>调度已启用</span><strong>自动生成 ${scheduler.autoGenerateEnabled ? "开启" : "关闭"}，自动预览 ${scheduler.autoPreviewEnabled ? "开启" : "关闭"}</strong><p>正式发送仍由确认人手动触发。</p>`
