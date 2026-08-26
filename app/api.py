@@ -19,6 +19,7 @@ from .services.rendering import report_html, report_renderer
 from .services.reports import REPORT_KINDS, report_service
 from .services.robot_commands import robot_command_service
 from .services.scheduler import scheduler_service
+from .services.teambition import teambition_service
 from .services.workflow_config import workflow_config_service
 from .time_utils import now_local
 
@@ -109,6 +110,12 @@ def readiness(_: str = Depends(_admin_token)) -> dict[str, Any]:
     )
     model_test = model_config_service.test_status()
     ai_summary_ready = bool(model_config_service.configured() and model_test.get("ok"))
+    teambition = teambition_service.status()
+    teambition_required = bool(config.get("teambitionIncludeInReports"))
+    teambition_snapshot_ready, teambition_reason = scheduler_service._teambition_snapshot_ready(
+        now_local(), freshness_hours=int(config.get("sourceFreshnessHours") or 26)
+    )
+    teambition_ready = bool(teambition.get("configured") and teambition_snapshot_ready)
     return {
         "ready": bool(
             settings.aitable_configured
@@ -117,6 +124,7 @@ def readiness(_: str = Depends(_admin_token)) -> dict[str, Any]:
             and callback_auth
             and delivery_ready
             and archive_ready
+            and (teambition_ready or not teambition_required)
             and (public_links or not config.get("sendGroupImages"))
         ),
         "checks": {
@@ -128,6 +136,12 @@ def readiness(_: str = Depends(_admin_token)) -> dict[str, Any]:
                 "baseUrl": settings.bi_center_base_url.strip(),
                 "tokenConfigured": bool(settings.bi_center_api_token.strip()),
                 "accessMode": "read_only",
+            },
+            "teambition": {
+                **teambition,
+                "required": teambition_required,
+                "ready": teambition_ready,
+                "reason": teambition_reason,
             },
             "aiSummary": ai_summary_ready,
             "aiSummaryDetail": {
@@ -154,6 +168,9 @@ def readiness(_: str = Depends(_admin_token)) -> dict[str, Any]:
                 "workflowEnabled": bool(config.get("enabled")),
                 "autoGenerateEnabled": bool(config.get("autoGenerateEnabled")),
                 "autoPreviewEnabled": bool(config.get("autoPreviewEnabled")),
+                "teambitionSyncEnabled": bool(
+                    settings.teambition_sync_enabled and config.get("teambitionSyncEnabled")
+                ),
                 "formalSendAlwaysManual": True,
             },
             "basePath": settings.normalized_base_path,
@@ -233,6 +250,42 @@ def sync_source(actor: str = Depends(_admin_token)) -> dict[str, Any]:
 def sync_directory(actor: str = Depends(_admin_token)) -> dict[str, Any]:
     try:
         return directory_service.refresh(actor=actor)
+    except Exception as exc:
+        _raise_api_error(exc)
+
+
+@router.get("/api/teambition/status")
+def teambition_status(_: str = Depends(_admin_token)) -> dict[str, Any]:
+    return teambition_service.status()
+
+
+@router.post("/api/sync/teambition")
+def sync_teambition(actor: str = Depends(_admin_token)) -> dict[str, Any]:
+    try:
+        return teambition_service.sync(actor=actor)
+    except Exception as exc:
+        _raise_api_error(exc)
+
+
+@router.get("/api/teambition/dashboard")
+def teambition_dashboard(
+    month: str = Query(default="", max_length=7),
+    query: str = Query(default="", max_length=200),
+    department: str = Query(default="", max_length=200),
+    status: str = Query(default="all", max_length=30),
+    limit: int = Query(default=500, ge=1, le=1000),
+    offset: int = Query(default=0, ge=0),
+    _: str = Depends(_admin_token),
+) -> dict[str, Any]:
+    try:
+        return teambition_service.dashboard(
+            month=month,
+            query=query,
+            department=department,
+            status=status,
+            limit=limit,
+            offset=offset,
+        )
     except Exception as exc:
         _raise_api_error(exc)
 

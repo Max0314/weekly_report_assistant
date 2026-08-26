@@ -6,14 +6,16 @@ from datetime import datetime, timedelta
 from typing import Any
 
 from ..db import Database, db
-from ..source_catalog import SOURCE_TABLES
+from ..source_catalog import SOURCE_TABLES, TEAMBITION_TABLE_ID
 from ..time_utils import SHANGHAI, from_db, now_local, to_db, weekly_window
 from .ai_summary import AISummaryClient, AISummaryError, ai_summary_client
 from .workflow_config import WorkflowConfigService, workflow_config_service
 
 
 REPORT_KINDS = {"combined", "product", "project"}
-PROJECT_TABLE_IDS = {str(item["tableId"]) for item in SOURCE_TABLES if item.get("projectView")}
+PROJECT_TABLE_IDS = {
+    str(item["tableId"]) for item in SOURCE_TABLES if item.get("projectView")
+} | {TEAMBITION_TABLE_ID}
 ROSTER_TABLE_IDS = {str(item["tableId"]) for item in SOURCE_TABLES if item.get("roster")}
 FINAL_STATES = {"formal_sent", "recalled", "cancelled"}
 
@@ -112,6 +114,11 @@ class ReportService:
         result: list[dict[str, Any]] = []
         for row in rows:
             item = self._format_source(row)
+            if (
+                item["tableId"] == TEAMBITION_TABLE_ID
+                and not config.get("teambitionIncludeInReports")
+            ):
+                continue
             if report_kind == "product" and not item["productManagerUserIds"]:
                 continue
             if report_kind == "project" and not (

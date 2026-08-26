@@ -42,7 +42,7 @@ async def lifespan(_: FastAPI):
 
 app = FastAPI(
     title="产品与项目经理周报助手",
-    version="0.1.0",
+    version="0.2.0",
     root_path=settings.normalized_base_path,
     docs_url="/api/docs",
     redoc_url=None,

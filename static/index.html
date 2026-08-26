@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <meta name="theme-color" content="#f6f8fb">
   <title>产品与项目经理周报助手</title>
-  <link rel="stylesheet" href="static/styles.css?v=20260817a">
+  <link rel="stylesheet" href="static/styles.css?v=20260826a">
 </head>
 <body>
   <div class="app-shell">
@@ -38,6 +38,7 @@
       <nav class="sidebar-nav" aria-label="功能导航">
         <p class="nav-group-label">工作台</p>
         <a href="#/overview" class="nav-item" data-route="overview"><span class="nav-icon">⌂</span><span>概览</span></a>
+        <a href="#/teambition" class="nav-item" data-route="teambition"><span class="nav-icon">TB</span><span>TB 工作看板</span></a>
         <p class="nav-group-label">周报管理</p>
         <a href="#/reports" class="nav-item" data-route="reports"><span class="nav-icon">▤</span><span>周报展示</span></a>
         <a href="#/report-config" class="nav-item" data-route="report-config"><span class="nav-icon">◇</span><span>周报配置</span></a>
@@ -59,8 +60,8 @@
             <div class="hero-copy">
               <span class="hero-kicker">WEEKLY OPERATIONS</span>
               <h2>从事实采集到正式推送，一处完成</h2>
-              <p>周报助手独立读取 AI 多维表和 bi_center 人员目录，保留版本、事实快照与审核痕迹。</p>
-              <div class="actions"><button data-action="sync-source" type="button">同步 AI 表</button><button data-action="sync-directory" class="secondary" type="button">同步人员</button><button data-go="reports" class="ghost" type="button">进入周报工作台</button></div>
+              <p>周报助手独立读取 AI 多维表、TB 任务和 bi_center 人员目录，保留版本、事实快照与审核痕迹。</p>
+              <div class="actions"><button data-action="sync-source" type="button">同步 AI 表</button><button data-action="sync-teambition" class="secondary" type="button">同步 TB</button><button data-action="sync-directory" class="secondary" type="button">同步人员</button><button data-go="reports" class="ghost" type="button">进入周报工作台</button></div>
             </div>
             <div id="overviewLatest" class="hero-latest"><p class="muted">连接后显示最新周报。</p></div>
           </section>
@@ -85,7 +86,7 @@
             <section class="panel workflow-panel">
               <div class="section-head"><div><p class="eyebrow">PROCESS</p><h2>标准流程</h2></div></div>
               <ol class="process-list">
-                <li><span>1</span><div><strong>同步事实</strong><p>读取 8 张来源表并固化快照。</p></div></li>
+                <li><span>1</span><div><strong>同步事实</strong><p>读取 8 张 AI 表与 TB 任务并固化快照。</p></div></li>
                 <li><span>2</span><div><strong>生成与修订</strong><p>程序计算指标，编辑六个正文区块。</p></div></li>
                 <li><span>3</span><div><strong>预览与确认</strong><p>测试目标先看，确认人审核后正式发送。</p></div></li>
               </ol>
@@ -95,6 +96,58 @@
           <section class="panel log-panel">
             <div class="section-head"><div><p class="eyebrow">ACTIVITY</p><h2>最近操作</h2></div><button id="clearLog" class="ghost compact" type="button">清空</button></div>
             <pre id="log">等待操作。</pre>
+          </section>
+        </div>
+      </section>
+
+      <section class="page" data-page="teambition" hidden>
+        <div class="page-width">
+          <section class="page-hero compact-hero">
+            <div><p class="eyebrow">TEAM WORK EXECUTION</p><h2>TB 工作看板</h2><p>沿用 bi_center 的 Teambition 官方只读接口与研发范围，查看执行人任务、项目、逾期和临期情况。</p></div>
+            <div class="actions"><button id="refreshTeambition" class="secondary" type="button">刷新看板</button><button data-action="sync-teambition" type="button">立即同步 TB</button></div>
+          </section>
+
+          <div id="teambitionStats" class="metric-grid">
+            <article class="metric-card"><span>进行中</span><strong>—</strong><small>等待读取</small></article>
+            <article class="metric-card"><span>已逾期</span><strong>—</strong><small>等待读取</small></article>
+            <article class="metric-card"><span>7 天内到期</span><strong>—</strong><small>等待读取</small></article>
+            <article class="metric-card"><span>本月完成</span><strong>—</strong><small>等待读取</small></article>
+          </div>
+
+          <section class="panel">
+            <div class="section-head"><div><p class="eyebrow">CONNECTION</p><h2>接口与同步状态</h2><p>密钥仅从服务器环境读取；页面只显示是否已配置。</p></div></div>
+            <div id="teambitionConnection" class="directory-status" aria-live="polite">
+              <article><span>接口来源</span><strong>待读取</strong><small>native / dingtalk</small></article>
+              <article><span>任务缓存</span><strong>—</strong><small>尚未同步</small></article>
+              <article><span>人员映射</span><strong>—</strong><small>尚未同步</small></article>
+              <article><span>最近同步</span><strong>—</strong><small>保存管理令牌后检查</small></article>
+            </div>
+          </section>
+
+          <section class="panel">
+            <div class="section-head"><div><p class="eyebrow">SCOPE</p><h2>同步与周报口径</h2><p>默认与 bi_center 一致，只同步研发体系七个部门的执行人任务。</p></div><button id="saveTeambitionConfig" type="button">保存 TB 配置</button></div>
+            <div class="toggle-grid">
+              <label class="toggle-card"><input id="teambitionSyncEnabled" type="checkbox"><span><strong>启用 TB 自动同步</strong><small>服务器总开关开启后，按间隔刷新只读任务快照。</small></span></label>
+              <label class="toggle-card"><input id="teambitionIncludeInReports" type="checkbox"><span><strong>纳入项目周报</strong><small>把 TB 执行人任务作为项目事实，综合版也会纳入。</small></span></label>
+            </div>
+            <div class="form-grid two-cols top-gap">
+              <label>同步间隔（分钟）<input id="teambitionSyncInterval" type="number" min="15" max="1440"><small class="field-help">与 AI 表同步分开调度；正式推送仍必须人工确认。</small></label>
+              <label>部门范围<textarea id="teambitionDepartments" rows="4" placeholder="每行一个部门"></textarea><small class="field-help">按 bi_center 主部门或业务组精确匹配；留空表示全部在职人员，不建议用于正式环境。</small></label>
+            </div>
+          </section>
+
+          <section class="panel">
+            <div class="report-toolbar tb-toolbar">
+              <div class="toolbar-filters">
+                <input id="teambitionMonth" type="month" aria-label="月份">
+                <select id="teambitionDepartment" aria-label="部门或业务组"><option value="">全部部门 / 业务组</option></select>
+                <select id="teambitionStatus" aria-label="任务状态"><option value="all">全部状态</option><option value="overdue">已逾期</option><option value="due_soon">7 天内到期</option><option value="in_progress">进行中</option><option value="completed">已完成</option></select>
+                <input id="teambitionSearch" type="search" placeholder="搜索任务、项目、执行人">
+              </div>
+              <button id="applyTeambitionFilters" class="secondary" type="button">应用筛选</button>
+            </div>
+            <div id="teambitionSummary" class="list-summary">等待读取 TB 任务。</div>
+            <div id="teambitionBoard" class="tb-board"><div class="empty-state"><strong>暂无 TB 数据</strong><p>配置正式密钥、同步人员目录后再执行 TB 同步。</p></div></div>
           </section>
         </div>
       </section>
@@ -280,6 +333,6 @@
     <details class="source-details"><summary>查看本版纳入的事实清单</summary><div id="reportSources" class="source-list"></div></details>
   </dialog>
 
-  <script src="static/app.js?v=20260817a"></script>
+  <script src="static/app.js?v=20260826a"></script>
 </body>
 </html>

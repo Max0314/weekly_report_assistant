@@ -3,7 +3,7 @@ from __future__ import annotations
 from functools import lru_cache
 from pathlib import Path
 
-from pydantic import Field
+from pydantic import AliasChoices, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -13,6 +13,7 @@ class Settings(BaseSettings):
         env_file_encoding="utf-8",
         extra="ignore",
         case_sensitive=False,
+        populate_by_name=True,
     )
 
     app_env: str = "development"
@@ -34,6 +35,68 @@ class Settings(BaseSettings):
     aitable_base_id: str = ""
     bi_center_base_url: str = "http://127.0.0.1:39054"
     bi_center_api_token: str = ""
+
+    # Teambition uses the same official API contracts and environment names as
+    # bi_center, while this service keeps its own client and SQLite snapshot.
+    teambition_sync_enabled: bool = Field(
+        default=False,
+        validation_alias=AliasChoices(
+            "teambition_sync_enabled",
+            "TEAMBITION_SYNC_ENABLED",
+            "BI_CENTER_TEAMBITION_SYNC_ENABLED",
+        ),
+    )
+    teambition_source: str = Field(
+        default="native",
+        validation_alias=AliasChoices(
+            "teambition_source", "TEAMBITION_SOURCE", "BI_CENTER_TEAMBITION_SOURCE"
+        ),
+    )
+    teambition_open_api_base: str = Field(
+        default="https://open.teambition.com/api",
+        validation_alias=AliasChoices(
+            "teambition_open_api_base",
+            "TEAMBITION_OPEN_API_BASE",
+            "BI_CENTER_TEAMBITION_OPEN_API_BASE",
+        ),
+    )
+    teambition_open_app_id: str = Field(
+        default="",
+        validation_alias=AliasChoices(
+            "teambition_open_app_id",
+            "TEAMBITION_OPEN_APP_ID",
+            "BI_CENTER_TEAMBITION_OPEN_APP_ID",
+        ),
+    )
+    teambition_open_app_secret: str = Field(
+        default="",
+        validation_alias=AliasChoices(
+            "teambition_open_app_secret",
+            "TEAMBITION_OPEN_APP_SECRET",
+            "BI_CENTER_TEAMBITION_OPEN_APP_SECRET",
+        ),
+    )
+    teambition_open_organization_id: str = Field(
+        default="",
+        validation_alias=AliasChoices(
+            "teambition_open_organization_id",
+            "TEAMBITION_OPEN_ORGANIZATION_ID",
+            "BI_CENTER_TEAMBITION_OPEN_ORGANIZATION_ID",
+        ),
+    )
+    teambition_dingtalk_app_key: str = ""
+    teambition_dingtalk_app_secret: str = ""
+    teambition_request_timeout: int = Field(
+        default=20,
+        ge=5,
+        le=180,
+        validation_alias=AliasChoices(
+            "TEAMBITION_OPEN_REQUEST_TIMEOUT",
+            "BI_CENTER_TEAMBITION_OPEN_REQUEST_TIMEOUT",
+            "teambition_request_timeout",
+            "TEAMBITION_REQUEST_TIMEOUT",
+        ),
+    )
 
     ai_base_url: str = ""
     ai_api_key: str = ""
@@ -83,6 +146,23 @@ class Settings(BaseSettings):
     @property
     def bi_center_configured(self) -> bool:
         return bool(self.bi_center_base_url.strip() and self.bi_center_api_token.strip())
+
+    @property
+    def teambition_configured(self) -> bool:
+        source = self.teambition_source.strip().lower() or "native"
+        if source == "native":
+            return bool(
+                self.teambition_open_app_id.strip()
+                and self.teambition_open_app_secret.strip()
+                and self.teambition_open_organization_id.strip()
+            )
+        if source == "dingtalk":
+            app_key = self.teambition_dingtalk_app_key.strip() or self.dingtalk_app_key.strip()
+            app_secret = (
+                self.teambition_dingtalk_app_secret.strip() or self.dingtalk_app_secret.strip()
+            )
+            return bool(app_key and app_secret)
+        return False
 
     @property
     def ai_configured(self) -> bool:

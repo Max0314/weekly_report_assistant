@@ -119,6 +119,66 @@ CREATE INDEX IF NOT EXISTS idx_source_record_event ON source_record(event_at);
 CREATE INDEX IF NOT EXISTS idx_source_record_due ON source_record(due_at);
 CREATE INDEX IF NOT EXISTS idx_source_record_table ON source_record(table_id, is_deleted);
 
+CREATE TABLE IF NOT EXISTS teambition_task (
+    task_id TEXT PRIMARY KEY,
+    unique_id TEXT NOT NULL DEFAULT '',
+    project_id TEXT NOT NULL DEFAULT '',
+    executor_user_id TEXT NOT NULL DEFAULT '',
+    executor_tb_user_id TEXT NOT NULL DEFAULT '',
+    creator_id TEXT NOT NULL DEFAULT '',
+    content TEXT NOT NULL DEFAULT '',
+    is_done INTEGER NOT NULL DEFAULT 0,
+    is_archived INTEGER NOT NULL DEFAULT 0,
+    is_deleted INTEGER NOT NULL DEFAULT 0,
+    priority INTEGER NOT NULL DEFAULT 0,
+    parent_task_id TEXT NOT NULL DEFAULT '',
+    start_at TEXT NOT NULL DEFAULT '',
+    due_at TEXT NOT NULL DEFAULT '',
+    accomplished_at TEXT NOT NULL DEFAULT '',
+    source_created_at TEXT NOT NULL DEFAULT '',
+    source_updated_at TEXT NOT NULL DEFAULT '',
+    synced_at TEXT NOT NULL,
+    raw_json TEXT NOT NULL DEFAULT '{}',
+    source_type TEXT NOT NULL DEFAULT 'native'
+);
+CREATE INDEX IF NOT EXISTS idx_teambition_task_executor ON teambition_task(executor_user_id, is_deleted);
+CREATE INDEX IF NOT EXISTS idx_teambition_task_due ON teambition_task(due_at, is_done, is_deleted);
+CREATE INDEX IF NOT EXISTS idx_teambition_task_project ON teambition_task(project_id, is_deleted);
+CREATE INDEX IF NOT EXISTS idx_teambition_task_parent ON teambition_task(parent_task_id, is_deleted);
+
+CREATE TABLE IF NOT EXISTS teambition_project (
+    project_id TEXT PRIMARY KEY,
+    name TEXT NOT NULL DEFAULT '',
+    is_archived INTEGER NOT NULL DEFAULT 0,
+    synced_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS teambition_user_map (
+    dingtalk_user_id TEXT PRIMARY KEY,
+    teambition_user_id TEXT NOT NULL DEFAULT '',
+    sync_status TEXT NOT NULL DEFAULT '',
+    error_text TEXT NOT NULL DEFAULT '',
+    synced_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS teambition_sync_run (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    actor TEXT NOT NULL DEFAULT '',
+    source_type TEXT NOT NULL DEFAULT '',
+    status TEXT NOT NULL,
+    started_at TEXT NOT NULL,
+    finished_at TEXT NOT NULL DEFAULT '',
+    member_count INTEGER NOT NULL DEFAULT 0,
+    ok_count INTEGER NOT NULL DEFAULT 0,
+    fail_count INTEGER NOT NULL DEFAULT 0,
+    task_count INTEGER NOT NULL DEFAULT 0,
+    changed_count INTEGER NOT NULL DEFAULT 0,
+    project_count INTEGER NOT NULL DEFAULT 0,
+    error_text TEXT NOT NULL DEFAULT '',
+    detail_json TEXT NOT NULL DEFAULT '{}'
+);
+CREATE INDEX IF NOT EXISTS idx_teambition_sync_started ON teambition_sync_run(started_at DESC);
+
 CREATE TABLE IF NOT EXISTS weekly_report (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     period_key TEXT NOT NULL,

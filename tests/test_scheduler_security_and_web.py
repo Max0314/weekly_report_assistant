@@ -50,6 +50,19 @@ class SchedulerSecurityAndWebTests(unittest.TestCase):
             INSERT INTO source_record(
               base_id,table_id,table_name,record_id,first_seen_at,last_seen_at,
               changed_at,record_hash,raw_json
+            ) VALUES ('teambition','teambition_tasks','TB任务','tb-r',?,?,?,?, '{}')
+            """,
+            (to_db(now), to_db(now), to_db(now), "tb-hash"),
+        )
+        ready, reason = scheduler._source_snapshot_ready(now, freshness_hours=26)
+        self.assertFalse(ready)
+        self.assertIn("empty", reason)
+
+        self.db.execute(
+            """
+            INSERT INTO source_record(
+              base_id,table_id,table_name,record_id,first_seen_at,last_seen_at,
+              changed_at,record_hash,raw_json
             ) VALUES ('b','t','table','r',?,?,?,?, '{}')
             """,
             (to_db(now), to_db(now), to_db(now), "hash"),
@@ -67,6 +80,37 @@ class SchedulerSecurityAndWebTests(unittest.TestCase):
         ready, reason = scheduler._source_snapshot_ready(now, freshness_hours=26)
         self.assertFalse(ready)
         self.assertEqual("upstream failed", reason)
+
+    def test_teambition_snapshot_requires_fresh_successful_members(self) -> None:
+        scheduler = SchedulerService(database=self.db)
+        now = datetime(2026, 8, 13, 12, 0, tzinfo=SHANGHAI)
+        ready, reason = scheduler._teambition_snapshot_ready(now, freshness_hours=26)
+        self.assertFalse(ready)
+        self.assertIn("has not completed", reason)
+
+        self.db.execute(
+            """
+            INSERT INTO teambition_sync_run(
+              actor,source_type,status,started_at,finished_at,member_count,ok_count
+            ) VALUES ('scheduler','native','success',?,?,?,?)
+            """,
+            (to_db(now), to_db(now), 3, 3),
+        )
+        ready, reason = scheduler._teambition_snapshot_ready(now, freshness_hours=26)
+        self.assertTrue(ready, reason)
+
+        stale = datetime(2026, 8, 11, 8, 0, tzinfo=SHANGHAI)
+        self.db.execute(
+            """
+            INSERT INTO teambition_sync_run(
+              actor,source_type,status,started_at,finished_at,member_count,ok_count
+            ) VALUES ('scheduler','native','partial',?,?,?,?)
+            """,
+            (to_db(stale), to_db(stale), 3, 2),
+        )
+        ready, reason = scheduler._teambition_snapshot_ready(now, freshness_hours=26)
+        self.assertFalse(ready)
+        self.assertIn("stale", reason)
 
     def test_send_claim_is_atomic_and_blocks_an_inflight_duplicate(self) -> None:
         delivery = DeliveryService(database=self.db)
@@ -145,6 +189,7 @@ class SchedulerSecurityAndWebTests(unittest.TestCase):
         self.assertIn('id="modelProvider"', html)
         self.assertIn('data-route="reports"', html)
         self.assertIn('data-route="report-config"', html)
+        self.assertIn('data-route="teambition"', html)
         self.assertIn('data-route="model-config"', html)
         self.assertIn('data-route="delivery"', html)
         self.assertIn('data-page="reports"', html)
@@ -153,13 +198,15 @@ class SchedulerSecurityAndWebTests(unittest.TestCase):
         self.assertIn('id="section-executiveSummary"', html)
         self.assertIn('aria-label="周报助手，产品与项目管理"', html)
         self.assertIn('id="directoryEndpoint"', html)
+        self.assertIn('id="teambitionBoard"', html)
+        self.assertIn('api("/api/sync/teambition"', script)
         self.assertIn('class="field-help"', html)
         self.assertIn("setRoute(routeFromHash())", script)
         self.assertIn('api("/api/config"', script)
         self.assertIn('api("/api/model-config"', script)
         self.assertIn('api("/api/model-config/test"', script)
-        self.assertIn("styles.css?v=20260817a", html)
-        self.assertIn("app.js?v=20260817a", html)
+        self.assertIn("styles.css?v=20260826a", html)
+        self.assertIn("app.js?v=20260826a", html)
         self.assertIn("proxy_pass http://127.0.0.1:39022;", nginx)
         self.assertNotIn("proxy_pass http://127.0.0.1:39022/;", nginx)
         self.assertIn(
@@ -186,6 +233,8 @@ class SchedulerSecurityAndWebTests(unittest.TestCase):
         ), patch.object(directory_service, "cache_status", return_value={"count": 7}), patch.object(
             workflow_config_service, "get", return_value=workflow
         ), patch.object(scheduler_service, "_source_snapshot_ready", return_value=(True, "ok")), patch.object(
+            scheduler_service, "_teambition_snapshot_ready", return_value=(True, "ok")
+        ), patch.object(
             model_config_service, "test_status", return_value={"ok": True}
         ), patch.object(model_config_service, "configured", return_value=True):
             payload = readiness("admin")

@@ -6,12 +6,14 @@ from typing import Any, Callable
 
 from ..config import settings
 from ..db import Database, db
+from ..source_catalog import TEAMBITION_TABLE_ID
 from ..time_utils import from_db, now_local, to_db, weekly_window
 from .collector import SourceCollector, source_collector
 from .delivery import DeliveryService, delivery_service
 from .directory import DirectoryService, directory_service
 from .rendering import ReportRenderer, report_renderer
 from .reports import ReportService, report_service
+from .teambition import TeambitionService, teambition_service
 from .workflow_config import WorkflowConfigService, workflow_config_service
 
 
@@ -25,6 +27,7 @@ class SchedulerService:
         reports: ReportService | None = None,
         renderer: ReportRenderer | None = None,
         delivery: DeliveryService | None = None,
+        teambition: TeambitionService | None = None,
     ) -> None:
         self.db = database or db
         self.config_service = config_service or workflow_config_service
@@ -33,6 +36,7 @@ class SchedulerService:
         self.reports = reports or report_service
         self.renderer = renderer or report_renderer
         self.delivery = delivery or delivery_service
+        self.teambition = teambition or teambition_service
         self._lock = threading.Lock()
 
     def _should_run(self, job_key: str, period_key: str, now: datetime) -> bool:
@@ -93,11 +97,39 @@ class SchedulerService:
         if now - finished_at > timedelta(hours=max(1, int(freshness_hours))):
             return False, "latest AI Table snapshot is stale"
         source_count = int(
-            (self.db.fetch_one("SELECT COUNT(*) AS count FROM source_record WHERE is_deleted=0") or {}).get("count")
+            (
+                self.db.fetch_one(
+                    "SELECT COUNT(*) AS count FROM source_record WHERE is_deleted=0 AND table_id<>?",
+                    (TEAMBITION_TABLE_ID,),
+                )
+                or {}
+            ).get("count")
             or 0
         )
         if source_count <= 0:
             return False, "latest AI Table snapshot is empty"
+        return True, ""
+
+    def _teambition_snapshot_ready(
+        self, now: datetime, *, freshness_hours: int
+    ) -> tuple[bool, str]:
+        latest = self.db.fetch_one(
+            """
+            SELECT status,finished_at,member_count,ok_count,error_text
+            FROM teambition_sync_run ORDER BY id DESC LIMIT 1
+            """
+        )
+        if not latest:
+            return False, "Teambition has not completed a usable sync"
+        if latest.get("status") not in {"success", "partial"}:
+            return False, str(latest.get("error_text") or "latest Teambition sync failed")
+        finished_at = from_db(latest.get("finished_at"))
+        if not finished_at:
+            return False, "latest Teambition sync has no completion timestamp"
+        if now - finished_at > timedelta(hours=max(1, int(freshness_hours))):
+            return False, "latest Teambition snapshot is stale"
+        if int(latest.get("member_count") or 0) <= 0 or int(latest.get("ok_count") or 0) <= 0:
+            return False, "latest Teambition snapshot has no successfully synced members"
         return True, ""
 
     def tick(self, reference: datetime | None = None) -> list[dict[str, Any]]:
@@ -112,11 +144,29 @@ class SchedulerService:
             interval = int(config["sourceSyncIntervalMinutes"])
             minute_index = (now.hour * 60 + now.minute) // interval * interval
             source_bucket = f"{now.date().isoformat()}:{minute_index:04d}"
+            teambition_interval = int(config["teambitionSyncIntervalMinutes"])
+            teambition_minute_index = (
+                (now.hour * 60 + now.minute) // teambition_interval * teambition_interval
+            )
+            teambition_bucket = f"{now.date().isoformat()}:{teambition_minute_index:04d}"
             directory_bucket = f"{now.date().isoformat()}:{now.hour // 6}"
             if config.get("directorySyncEnabled") and settings.bi_center_configured and self._should_run("directory_sync", directory_bucket, now):
                 results.append(self._run("directory_sync", directory_bucket, lambda: self.directory.refresh(actor="scheduler")))
             if config.get("sourceSyncEnabled") and settings.aitable_configured and self._should_run("source_sync", source_bucket, now):
                 results.append(self._run("source_sync", source_bucket, lambda: self.collector.sync_all(actor="scheduler")))
+            if (
+                config.get("teambitionSyncEnabled")
+                and settings.teambition_sync_enabled
+                and settings.teambition_configured
+                and self._should_run("teambition_sync", teambition_bucket, now)
+            ):
+                results.append(
+                    self._run(
+                        "teambition_sync",
+                        teambition_bucket,
+                        lambda: self.teambition.sync(actor="scheduler"),
+                    )
+                )
             window = weekly_window(
                 now,
                 end_weekday=int(config["periodEndWeekday"]),
@@ -137,9 +187,15 @@ class SchedulerService:
             source_ready, source_error = self._source_snapshot_ready(
                 now, freshness_hours=int(config["sourceFreshnessHours"])
             )
-            if due and not source_ready and config.get("autoGenerateEnabled"):
-                results.append({"job": "report_generate", "status": "blocked", "error": source_error})
-            if due and source_ready and config.get("autoGenerateEnabled") and self._should_run("report_generate", period_key, now):
+            teambition_required = bool(config.get("teambitionIncludeInReports"))
+            teambition_ready, teambition_error = self._teambition_snapshot_ready(
+                now, freshness_hours=int(config["sourceFreshnessHours"])
+            )
+            data_ready = bool(source_ready and (teambition_ready or not teambition_required))
+            data_error = source_error if not source_ready else teambition_error
+            if due and not data_ready and config.get("autoGenerateEnabled"):
+                results.append({"job": "report_generate", "status": "blocked", "error": data_error})
+            if due and data_ready and config.get("autoGenerateEnabled") and self._should_run("report_generate", period_key, now):
                 def generate() -> Any:
                     existing = self.reports.latest(period_key=period_key)
                     return existing or self.reports.generate(period_key=period_key, actor="scheduler")
@@ -148,7 +204,7 @@ class SchedulerService:
                     generate,
                 )
                 results.append(generated)
-            if due and source_ready and not in_quiet_hours and config.get("autoPreviewEnabled") and self._should_run("report_preview", period_key, now):
+            if due and data_ready and not in_quiet_hours and config.get("autoPreviewEnabled") and self._should_run("report_preview", period_key, now):
                 report = self.reports.latest(period_key=period_key)
                 if report:
                     def preview() -> Any:

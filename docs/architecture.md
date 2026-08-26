@@ -5,6 +5,8 @@
 ```mermaid
 flowchart LR
   A["钉钉 AI 多维表（8 张来源表）"] --> B["快照采集与字段归一化"]
+  T["Teambition 官方只读 API"] --> U["TB 任务、项目与身份映射缓存"]
+  U --> B
   C["bi_center 人员与负责人目录 API"] --> D["本地员工、组织与关系缓存"]
   D --> B
   B --> E["周周期事实筛选与统计"]
@@ -32,6 +34,8 @@ flowchart LR
 | 产品经理名单 | `VdXcedx` | 名单辅助 |
 | 周报存档 | `2m05o4u` | 不作为周报事实来源；正式发送成功后可选回写 |
 
+Teambition 是独立外部来源，不占用 AI 多维表 tableId。正式默认链路与 `bi_center` 正式容器一致，使用 Teambition native OpenAPI；dingtalk Project API 仅保留为兼容模式。客户端和 SQLite 表均在本服务内实现。任务缓存写入 `teambition_task`，项目写入 `teambition_project`，钉钉/TB 身份映射写入 `teambition_user_map`，同步结果写入 `teambition_sync_run`。叶子任务同时投影为 `source_record.table_id=teambition_tasks`，供综合版和项目经理版周报读取。
+
 字段使用中文字段名匹配，不依赖易变化的 fieldId。表结构发生调整时，采集会保留原始响应到 `raw_json`，但不会把运行数据提交到 Git。
 
 归档写入与来源采集分离：启用前必须配置语义键到精确 fieldId/字段名的映射，写入前重新读取表结构并转换为 fieldId。`archiveKey` 是必填幂等字段，格式为“周期 + 周报类型 + 版本”；重试先全表查找该键，命中则恢复本地归档状态而不新增记录。
@@ -43,6 +47,8 @@ flowchart LR
 AI 摘要默认不包含人员姓名，且只发送风险优先的有限事实；所有计数和完整事实清单均由本地程序产生。只有显式配置模型地址、密钥和模型名时才调用外部 AI。部署环境可从 `bi_center` 安全复制当前有效配置；管理页保存的覆盖值存入本服务 SQLite `app_config`，API Key 读取时始终脱敏。最近一次连接测试只保存模型身份、成功状态和错误摘要，不保存额外密钥。恢复沿用只删除本服务覆盖，不调用或修改 `bi_center`。
 
 项目经理版优先使用“责任人”等项目负责人字段；`重点项目跟踪` 和 `支持及待办` 作为项目视图。若实际表中还有项目经理字段，可通过 `projectManagerFieldOverrides` 配置并在后续版本扩展验证。
+
+TB 只按执行人同步。默认范围与 `bi_center` 的研发体系七部门一致；父任务、已归档项目、已归档/删除任务不进入看板或周报，避免父子任务重复。未完成且已过截止时间的任务生成明确风险事实，执行人的钉钉 UserID 用作项目经理身份，以便覆盖统计与人员目录关联。
 
 人员覆盖口径：产品经理预期名单来自 `产品经理名单`；项目经理预期名单由 `projectManagerRoster` 和 `bi_center` 员工职位中的 `projectManagerTitleKeywords` 合并。生成周报时保存覆盖统计与缺失清单，提醒只能由管理员人工触发，并以“周期 + 角色 + UserID”幂等。
 
@@ -57,5 +63,7 @@ AI 摘要默认不包含人员姓名，且只发送风险优先的有限事实�
 ## 存储与恢复
 
 SQLite 使用 WAL；`runtime/` 挂载持久卷。备份数据库文件和 `runtime/reports/` 即可恢复。启动时幂等增加周报事实快照、覆盖清单及归档状态字段；已有周报保留原数据并在缺少快照时兼容读取当前源记录，新周报写入不可变事实快照。模型覆盖和测试状态复用现有 `app_config` 表的 `ai_model`、`ai_model_test` 配置键，不新增表。
+
+TB 接入新增四张 SQLite 表，不改动既有表结构。回滚旧镜像不会删除这些表，既有 AI 表事实、周报和推送日志不受影响；如需彻底移除，必须停服备份后再删除 `teambition_task`、`teambition_project`、`teambition_user_map`、`teambition_sync_run`，并清理 `source_record` 中 `table_id=teambition_tasks` 的投影数据。
 
 人员目录同步会事务性刷新 `employee_cache`、`organization_cache` 和 `employee_org_relation_cache`。员工表保留检索所需的工号、主部门、业务组、任职状态和负责人标志；组织表保存部门/业务组的成员数和负责人数；关系表区分主归属与跨组织负责人范围，避免把兼任负责人错误归属到其主部门。旧数据库启动时通过幂等迁移增加员工列和两张缓存表。回滚旧镜像不会删除新增列或表；如需彻底物理回退，应停服备份 SQLite 后重建数据库副本，不建议直接删除列。

@@ -13,7 +13,8 @@
 
 3. 生成不同的长随机值用于 `ADMIN_API_TOKEN`、`PUBLIC_LINK_SECRET` 和 `DINGTALK_CALLBACK_TOKEN`。
 4. 执行 `docker compose up -d --build`，等待 Chromium 依赖安装和健康检查通过。
-5. 打开管理页，按“人员 → AI 表 → 覆盖检查 → 生成 → 正文核对 → 图片 → 个人预览 → 审核 → 个人正式发送”的顺序联调；确认消息链路后再配置字段映射并启用存档回写。
+5. 从 `bi_center` 正式容器的受保护运行环境安全复制 `TEAMBITION_SOURCE=native`、`TEAMBITION_OPEN_API_BASE`、`TEAMBITION_OPEN_APP_ID`、`TEAMBITION_OPEN_APP_SECRET` 和 `TEAMBITION_OPEN_ORGANIZATION_ID`，不在终端输出值；保持 `TEAMBITION_SYNC_ENABLED=false`，先完成一次手动同步和看板核验。
+6. 打开管理页，按“人员 → AI 表 → TB → 覆盖检查 → 生成 → 正文核对 → 图片 → 个人预览 → 审核 → 个人正式发送”的顺序联调；确认消息链路后再配置字段映射并启用存档回写。
 
 ## Nginx 子路径
 
@@ -77,10 +78,11 @@ https://neoflow-cn.neo-net.com/weekly-assistant/api/dingtalk/robot/callback?toke
 ## 健康与诊断
 
 - `/api/health` 仅检查服务与 SQLite。
-- `/api/readiness` 需要管理令牌，显示钉钉、AI 表、最近源表快照、bi_center、最近模型连接测试、回调鉴权、公开链接、个人/群目标、归档配置和人员缓存状态，不返回密钥。应用配置齐全但源表最近同步失败或过期时，总体状态仍为未就绪。
+- `/api/readiness` 需要管理令牌，显示钉钉、AI 表、最近源表快照、bi_center、TB 快照、最近模型连接测试、回调鉴权、公开链接、个人/群目标、归档配置和人员缓存状态，不返回密钥。应用配置齐全但 AI 表或已纳入周报的 TB 快照最近同步失败、无成功成员或过期时，总体状态仍为未就绪。
 - `/api/model-config` 需要管理令牌，返回当前模型、来源与脱敏 Key；连接测试可使用未保存候选配置，留空 Key 时安全复用当前生效 Key。
+- `/api/teambition/status`、`/api/teambition/dashboard` 和 `POST /api/sync/teambition` 均需要管理令牌；状态接口只返回来源、配置布尔值、数量和最近批次，不返回 App ID、Secret、组织 ID 或访问令牌。
 - `/api/coverage` 显示预期产品/项目经理与本周有效事项覆盖；`POST /api/coverage/remind` 仅在管理员确认后发送一次性缺报单聊。
-- `sync_run` 保存逐表同步结果；最新同步失败或超过 `sourceFreshnessHours` 时，自动生成和自动预览会被阻断。
+- `sync_run` 保存逐表同步结果；`teambition_sync_run` 保存 TB 成员级批次摘要。AI 表最新同步失败/过期/空快照，或已纳入周报的 TB 最新批次失败/过期/无成功成员时，自动生成和自动预览会被阻断；关闭自动同步不会绕过该门禁，只能手动刷新快照或明确关闭“纳入项目周报”。
 - `job_status` 保存调度失败及重试次数；机器人事件和推送日志只在管理接口可见。
 - 外部接口失败时不删除上一版快照；正式推送失败进入 `retryable_error`。
 
@@ -95,8 +97,9 @@ https://neoflow-cn.neo-net.com/weekly-assistant/api/dingtalk/robot/callback?toke
 - `weekly_report.archive_payload_json TEXT NOT NULL DEFAULT '{}'`
 - `employee_cache` 增加工号、主部门 ID、任职来源、负责人标志与负责人范围字段
 - 新建 `organization_cache` 和 `employee_org_relation_cache` 两张可重建缓存表
+- 新建 `teambition_task`、`teambition_project`、`teambition_user_map` 和 `teambition_sync_run` 四张 TB 缓存/审计表；并以 `source_record.table_id=teambition_tasks` 保存叶子任务周报投影
 
-影响：已有周报内容、状态和发送日志不变；新增归档字段初值为空，不会自动回写历史周报。旧周报没有历史事实快照时继续按原兼容逻辑读取源记录，新生成周报保存生成时事实与覆盖清单。员工新增字段初值为空，下一次目录同步会事务性填充员工、组织和关系缓存，不修改 bi_center 数据。
+影响：已有周报内容、状态和发送日志不变；新增归档字段初值为空，不会自动回写历史周报。旧周报没有历史事实快照时继续按原兼容逻辑读取源记录，新生成周报保存生成时事实与覆盖清单。员工新增字段初值为空，下一次目录同步会事务性填充员工、组织和关系缓存，不修改 bi_center 数据。TB 新表初始为空，只有管理员手动同步或显式打开部署总开关后才会写入；不会自动回填历史周报。
 
 ## 回滚
 
@@ -104,6 +107,7 @@ https://neoflow-cn.neo-net.com/weekly-assistant/api/dingtalk/robot/callback?toke
 2. 停止当前容器，以旧镜像重建；不要删除或覆盖 `runtime/`。
 3. 旧版本会忽略新增列和缓存表，因此应用回滚无需删除结构。
 4. 如需彻底回滚目录缓存结构，停服并备份 SQLite 后，可在数据库副本中删除 `employee_org_relation_cache`、`organization_cache`；员工新增列可保留为空。
-5. 如需物理删除新增列，应在数据库副本上重建表并验证后替换；不在生产库上直接执行破坏性变更。
+5. 如需彻底回滚 TB 接入，先设置 `TEAMBITION_SYNC_ENABLED=false`，再在数据库副本中删除四张 `teambition_*` 表和 `source_record.table_id=teambition_tasks` 投影；历史周报的事实快照保持不变。
+6. 如需物理删除新增列，应在数据库副本上重建表并验证后替换；不在生产库上直接执行破坏性变更。
 
 撤回钉钉消息依赖发送时取得的 `processQueryKey`，超出钉钉允许窗口时可能无法撤回。部分撤回失败时周报进入 `retryable_error`，不会错误标记为全部撤回。

@@ -116,6 +116,8 @@ def normalize_config(raw: dict[str, Any] | None) -> dict[str, Any]:
         "enabled",
         "sourceSyncEnabled",
         "directorySyncEnabled",
+        "teambitionSyncEnabled",
+        "teambitionIncludeInReports",
         "autoGenerateEnabled",
         "autoPreviewEnabled",
         "requireApproval",
@@ -130,6 +132,9 @@ def normalize_config(raw: dict[str, Any] | None) -> dict[str, Any]:
     config["autoFormalSendEnabled"] = False
     config["sourceSyncIntervalMinutes"] = _int(config.get("sourceSyncIntervalMinutes"), 60, 5, 1440)
     config["sourceFreshnessHours"] = _int(config.get("sourceFreshnessHours"), 26, 1, 168)
+    config["teambitionSyncIntervalMinutes"] = _int(
+        config.get("teambitionSyncIntervalMinutes"), 60, 15, 1440
+    )
     config["generateWeekday"] = _int(config.get("generateWeekday"), 4, 0, 6)
     config["generateHour"] = _int(config.get("generateHour"), 18, 0, 23)
     config["generateMinute"] = _int(config.get("generateMinute"), 10, 0, 59)
@@ -147,6 +152,7 @@ def normalize_config(raw: dict[str, Any] | None) -> dict[str, Any]:
     config["approverTargets"] = _people(config.get("approverTargets"))
     config["projectManagerRoster"] = _people(config.get("projectManagerRoster"))
     config["projectManagerTitleKeywords"] = _keywords(config.get("projectManagerTitleKeywords"))
+    config["teambitionDepartmentNames"] = _keywords(config.get("teambitionDepartmentNames"))
     config["projectBaseline"] = _projects(config.get("projectBaseline"))
     config["approvalCommandScope"] = (
         "formal_only" if config.get("approvalCommandScope") == "formal_only" else "any_configured_group"

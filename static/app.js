@@ -14,6 +14,7 @@
   ];
   const ROUTES = {
     overview: {eyebrow: "WORKSPACE", title: "工作台概览", subtitle: "掌握数据、生成、审核与推送状态"},
+    teambition: {eyebrow: "TEAM WORK EXECUTION", title: "TB 工作看板", subtitle: "项目任务、执行人、逾期与临期状态"},
     reports: {eyebrow: "REPORT CENTER", title: "周报展示", subtitle: "当前成稿、正式周报与历史版本"},
     "report-config": {eyebrow: "REPORT SETTINGS", title: "周报配置", subtitle: "周期口径、项目背景与存档规则"},
     "model-config": {eyebrow: "MODEL GATEWAY", title: "模型配置", subtitle: "沿用 bi_center 的统一模型配置"},
@@ -33,6 +34,7 @@
   let eventItems = [];
   let latestReadiness = null;
   let latestCoverage = null;
+  let teambitionData = null;
   let activeReportId = null;
   let reportFilter = "current";
   let toastTimer = null;
@@ -67,6 +69,7 @@
     if (!data || typeof data !== "object") return "操作已完成。";
     if (data.report?.id) return `周报 #${data.report.id}，成功 ${data.sent ?? data.recalled ?? 0}，失败 ${data.failed ?? 0}`;
     if (data.id && data.title) return `周报 #${data.id} ${data.title}`;
+    if (data.tasks != null && data.members != null) return `同步 ${data.members} 人、${data.tasks} 条 TB 任务，失败 ${data.fail || 0}`;
     if (data.runId) return `同步 ${data.tableCount || 0} 张表、${data.recordCount || 0} 条记录`;
     if (data.count != null) return `处理 ${data.count} 条记录`;
     if (data.message) return String(data.message);
@@ -96,6 +99,9 @@
     $("#pageSubtitle").textContent = meta.subtitle;
     document.title = `${meta.title} · 产品与项目经理周报助手`;
     closeSidebar();
+    if (next === "teambition" && tokenInput.value.trim() && !teambitionData) {
+      loadTeambitionDashboard().catch((error) => showToast(`TB 看板读取失败：${error.message}`, "error"));
+    }
   };
 
   const routeFromHash = () => String(window.location.hash || "").replace(/^#\/?/, "").split("?")[0] || "overview";
@@ -123,6 +129,7 @@
       checkCard("钉钉应用", c.dingtalkApp ? "ok" : "bad"),
       checkCard("AI 多维表", c.sourceData?.ready ? "ok" : "bad", c.sourceData?.reason || "最近同步成功"),
       checkCard("人员目录", c.biCenter ? "ok" : "bad", `${c.directoryCache?.count || 0} 人`),
+      checkCard("TB 任务", c.teambition?.ready ? "ok" : (c.teambition?.required ? "bad" : "neutral"), c.teambition?.configured ? `${c.teambition?.taskCount || 0} 条` : "未配置密钥"),
       checkCard("AI 摘要", c.aiSummary ? "ok" : (aiDetail.configured ? "neutral" : "bad"), c.aiSummary ? "连接通过" : (aiDetail.error || "未配置")),
       checkCard("推送目标", c.deliveryTargets?.ready ? "ok" : "bad", `测试 ${c.deliveryTargets?.preview || 0} / 正式 ${c.deliveryTargets?.formal || 0}`),
       checkCard("回调鉴权", c.callbackAuth ? "ok" : "bad"),
@@ -230,6 +237,59 @@
     return data;
   };
 
+  const tbStatusLabel = (value) => ({
+    overdue: "已逾期", due_soon: "7 天内到期", in_progress: "进行中", completed: "已完成",
+  }[value] || value || "未知");
+
+  const renderTeambition = (data) => {
+    teambitionData = data || {};
+    const summary = teambitionData.summary || {};
+    const sync = teambitionData.sync || {};
+    const latestRun = sync.latestRun || {};
+    const stats = [
+      ["进行中", summary.inProgressCount || 0, `未完成总计 ${summary.openCount || 0}`],
+      ["已逾期", summary.overdueCount || 0, "未完成且已超过截止时间"],
+      ["7 天内到期", summary.dueSoonCount || 0, `本月到期 ${summary.dueInMonthCount || 0}`],
+      ["本月完成", summary.completedInMonthCount || 0, `按时完成 ${summary.onTimeInMonthCount || 0}`],
+    ];
+    $("#teambitionStats").innerHTML = stats.map(([label, value, detail]) => `<article class="metric-card"><span>${escapeHtml(label)}</span><strong>${escapeHtml(value)}</strong><small>${escapeHtml(detail)}</small></article>`).join("");
+    $("#teambitionConnection").innerHTML = [
+      ["接口来源", sync.source || teambitionData.source || "native", sync.configured ? "只读密钥已配置" : "只读密钥未配置"],
+      ["任务缓存", `${sync.taskCount || 0} 条`, `${sync.projectCount || 0} 个项目`],
+      ["人员映射", `${sync.memberCount || 0} 人`, latestRun.fail_count ? `最近失败 ${latestRun.fail_count} 人` : "最近无失败"],
+      ["最近同步", latestRun.status || "尚未同步", latestRun.finished_at || sync.syncedAt || "暂无时间"],
+    ].map(([label, value, detail]) => `<article><span>${escapeHtml(label)}</span><strong>${escapeHtml(value)}</strong><small>${escapeHtml(detail)}</small></article>`).join("");
+    const departmentSelect = $("#teambitionDepartment");
+    const selectedDepartment = departmentSelect.value;
+    departmentSelect.innerHTML = '<option value="">全部部门 / 业务组</option>' + (teambitionData.filters?.departments || []).map((value) => `<option value="${escapeHtml(value)}">${escapeHtml(value)}</option>`).join("");
+    if ([...departmentSelect.options].some((option) => option.value === selectedDepartment)) departmentSelect.value = selectedDepartment;
+    const columns = [
+      ["overdue", "已逾期"], ["due_soon", "7 天内到期"], ["in_progress", "进行中"], ["completed", "已完成"],
+    ];
+    const items = teambitionData.items || [];
+    $("#teambitionSummary").textContent = `${teambitionData.month || "当前月"} · 当前筛选 ${teambitionData.total || 0} 条 · 执行人 ${summary.executorCount || 0} · 项目 ${summary.projectCount || 0}`;
+    $("#teambitionBoard").innerHTML = columns.map(([key, label]) => {
+      const tasks = items.filter((item) => item.status === key);
+      const body = tasks.length ? tasks.map((item) => {
+        const due = item.dueAt ? item.dueAt.replace("T", " ").slice(0, 16) : "未设置截止时间";
+        const owner = [item.executorName, item.bizGroup || item.department].filter(Boolean).join(" · ");
+        return `<article class="tb-task"><div class="tb-task-meta"><span>${escapeHtml(item.projectName || "未归属项目")}</span>${item.priority >= 2 ? '<span>高优先级</span>' : ""}</div><h3>${escapeHtml(item.title)}</h3><p>${escapeHtml(owner || "未识别执行人")}</p><div class="tb-task-footer"><span>${escapeHtml(tbStatusLabel(item.status))}</span><span>${escapeHtml(due)}</span></div></article>`;
+      }).join("") : '<div class="tb-empty-column">当前没有任务</div>';
+      return `<section class="tb-column" data-status="${key}"><div class="tb-column-head"><strong>${label}</strong><span>${tasks.length}</span></div><div class="tb-task-list">${body}</div></section>`;
+    }).join("");
+  };
+
+  const loadTeambitionDashboard = async () => {
+    const month = $("#teambitionMonth").value;
+    const department = $("#teambitionDepartment").value;
+    const status = $("#teambitionStatus").value;
+    const query = $("#teambitionSearch").value.trim();
+    const params = new URLSearchParams({month, department, status, query, limit: "1000"});
+    const data = await api(`/api/teambition/dashboard?${params.toString()}`);
+    renderTeambition(data);
+    return data;
+  };
+
   const openReport = async (id) => {
     const report = await api(`/api/reports/${id}`);
     activeReportId = Number(id);
@@ -293,6 +353,10 @@
     setChecked("#enforceDirectory", workflowConfig.enforceDirectoryForFormalSend !== false);
     setValue("#sourceSyncInterval", workflowConfig.sourceSyncIntervalMinutes ?? 60);
     setValue("#sourceFreshnessHours", workflowConfig.sourceFreshnessHours ?? 26);
+    setChecked("#teambitionSyncEnabled", workflowConfig.teambitionSyncEnabled !== false);
+    setChecked("#teambitionIncludeInReports", workflowConfig.teambitionIncludeInReports !== false);
+    setValue("#teambitionSyncInterval", workflowConfig.teambitionSyncIntervalMinutes ?? 60);
+    setValue("#teambitionDepartments", (workflowConfig.teambitionDepartmentNames || []).join("\n"));
     setValue("#projectManagerKeywords", (workflowConfig.projectManagerTitleKeywords || []).join("，"));
     setChecked("#archiveWriteEnabled", workflowConfig.archiveWriteEnabled);
     setValue("#archiveTableId", workflowConfig.archiveTableId || "");
@@ -326,6 +390,10 @@
       enforceDirectoryForFormalSend: $("#enforceDirectory").checked,
       sourceSyncIntervalMinutes: toInt($("#sourceSyncInterval").value, 60),
       sourceFreshnessHours: toInt($("#sourceFreshnessHours").value, 26),
+      teambitionSyncEnabled: $("#teambitionSyncEnabled").checked,
+      teambitionIncludeInReports: $("#teambitionIncludeInReports").checked,
+      teambitionSyncIntervalMinutes: toInt($("#teambitionSyncInterval").value, 60),
+      teambitionDepartmentNames: $("#teambitionDepartments").value.split(/[，,\n]/).map((item) => item.trim()).filter(Boolean),
       projectManagerTitleKeywords: $("#projectManagerKeywords").value.split(/[,，\n]/).map((item) => item.trim()).filter(Boolean),
       projectBaseline: readProjectRows(),
       archiveWriteEnabled: $("#archiveWriteEnabled").checked,
@@ -467,7 +535,7 @@
   const refreshAll = async () => {
     if (!tokenInput.value.trim()) return showToast("请先保存管理令牌。", "error");
     busy.textContent = "读取中…";
-    const tasks = [loadReadiness(), loadReports(), loadConfig(), loadModelConfig(), loadCoverage(), loadEvents()];
+    const tasks = [loadReadiness(), loadReports(), loadConfig(), loadModelConfig(), loadCoverage(), loadEvents(), loadTeambitionDashboard()];
     const results = await Promise.allSettled(tasks);
     const errors = [...new Set(results.filter((item) => item.status === "rejected").map((item) => item.reason?.message || "未知错误"))];
     if (errors.length) {
@@ -486,6 +554,8 @@
   });
   $("#refreshAll").addEventListener("click", refreshAll);
   $("#refreshOverview").addEventListener("click", () => run("检查链路", loadReadiness, {refresh: false}));
+  $("#refreshTeambition").addEventListener("click", () => run("刷新 TB 看板", loadTeambitionDashboard, {refresh: false}));
+  $("#applyTeambitionFilters").addEventListener("click", () => run("筛选 TB 看板", loadTeambitionDashboard, {refresh: false}));
   $("#refreshCoverage").addEventListener("click", () => run("刷新人员覆盖", loadCoverage, {refresh: false}));
   $("#remindCoverage").addEventListener("click", () => {
     if (!window.confirm("确定只向当前缺报人员发送一次钉钉单聊提醒？")) return;
@@ -537,6 +607,7 @@
     showToast("已生成个人全流程配置草稿，请保存推送设置。");
   });
   $("#saveReportConfig").addEventListener("click", () => run("保存周报配置", () => saveWorkflowConfig("周报配置"), {refresh: false}));
+  $("#saveTeambitionConfig").addEventListener("click", () => run("保存 TB 配置", () => saveWorkflowConfig("TB 配置"), {refresh: false}));
   $("#saveDeliveryConfig").addEventListener("click", () => run("保存推送设置", () => saveWorkflowConfig("推送设置"), {refresh: false}));
   $("#applyConfigJson").addEventListener("click", () => {
     try { applyConfigToForm(JSON.parse($("#configEditor").value || "{}"), false); showToast("JSON 已应用到表单，尚未保存。"); }
@@ -584,6 +655,11 @@
   document.addEventListener("click", (event) => {
     const action = event.target.closest("[data-action]")?.dataset.action;
     if (action === "sync-source") run("同步 AI 表", () => api("/api/sync/source", {method: "POST"}));
+    if (action === "sync-teambition") run("同步 TB", async () => {
+      const data = await api("/api/sync/teambition", {method: "POST"});
+      await loadTeambitionDashboard();
+      return data;
+    });
     if (action === "sync-directory") run("同步人员目录", () => api("/api/sync/directory", {method: "POST"}));
     if (action === "generate") run("生成周报", () => api("/api/reports/generate", {method: "POST", body: JSON.stringify({reportKind: $("#reportKind").value, useAI: true})}));
 
@@ -629,6 +705,10 @@
     run(label, () => api(path, {method: "POST"}));
   });
 
+  if (!$("#teambitionMonth").value) {
+    const today = new Date();
+    $("#teambitionMonth").value = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}`;
+  }
   setRoute(routeFromHash());
   if (!window.location.hash) window.history.replaceState(null, "", "#/overview");
   if (tokenInput.value) refreshAll();

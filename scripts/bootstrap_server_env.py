@@ -46,6 +46,15 @@ def main() -> int:
         "AITABLE_BASE_ID": args.aitable_base_id,
         "BI_CENTER_BASE_URL": "",
         "BI_CENTER_API_TOKEN": "",
+        "TEAMBITION_SYNC_ENABLED": "false",
+        "TEAMBITION_SOURCE": "native",
+        "TEAMBITION_OPEN_API_BASE": "https://open.teambition.com/api",
+        "TEAMBITION_OPEN_APP_ID": "",
+        "TEAMBITION_OPEN_APP_SECRET": "",
+        "TEAMBITION_OPEN_ORGANIZATION_ID": "",
+        "TEAMBITION_DINGTALK_APP_KEY": "",
+        "TEAMBITION_DINGTALK_APP_SECRET": "",
+        "TEAMBITION_OPEN_REQUEST_TIMEOUT": "20",
         "AI_BASE_URL": "",
         "AI_API_KEY": "",
         "AI_MODEL": "",
@@ -66,7 +75,8 @@ def main() -> int:
     print(f"created {output} with mode 600")
     print(
         "missing runtime values: DINGTALK_APP_SECRET, DINGTALK_AITABLE_OPERATOR_ID, "
-        "BI_CENTER_BASE_URL, BI_CENTER_API_TOKEN"
+        "BI_CENTER_BASE_URL, BI_CENTER_API_TOKEN, TEAMBITION_OPEN_APP_ID, "
+        "TEAMBITION_OPEN_APP_SECRET, TEAMBITION_OPEN_ORGANIZATION_ID"
     )
     return 0
 

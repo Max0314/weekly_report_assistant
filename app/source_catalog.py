@@ -105,12 +105,28 @@ SOURCE_TABLES: list[dict[str, Any]] = [
 SOURCE_TABLE_BY_ID = {item["tableId"]: item for item in SOURCE_TABLES}
 
 
+TEAMBITION_TABLE_ID = "teambition_tasks"
+DEFAULT_TEAMBITION_DEPARTMENTS = [
+    "检测技术部",
+    "AI应用研发部",
+    "物联网事业部",
+    "媒体终端软件研发部",
+    "通讯终端软件研发部",
+    "产品工程部",
+    "硬件研发部",
+]
+
+
 DEFAULT_WORKFLOW_CONFIG: dict[str, Any] = {
     "enabled": True,
     "sourceSyncEnabled": True,
     "sourceSyncIntervalMinutes": 60,
     "sourceFreshnessHours": 26,
     "directorySyncEnabled": True,
+    "teambitionSyncEnabled": True,
+    "teambitionSyncIntervalMinutes": 60,
+    "teambitionIncludeInReports": True,
+    "teambitionDepartmentNames": DEFAULT_TEAMBITION_DEPARTMENTS,
     "autoGenerateEnabled": True,
     "autoPreviewEnabled": False,
     "autoFormalSendEnabled": False,
