@@ -13,7 +13,6 @@ from urllib.parse import urlencode
 from ..config import Settings, settings
 from ..integrations.http_json import request_json
 from .directory import DirectoryService, directory_service
-from .workflow_config import WorkflowConfigService, workflow_config_service
 
 
 SESSION_COOKIE = "weekly_report_admin_session"
@@ -43,11 +42,9 @@ class AdminAuthService:
         *,
         app_settings: Settings | None = None,
         directory: DirectoryService | None = None,
-        config_service: WorkflowConfigService | None = None,
     ) -> None:
         self.settings = app_settings or settings
         self.directory = directory or directory_service
-        self.config_service = config_service or workflow_config_service
 
     @property
     def configured(self) -> bool:
@@ -173,13 +170,6 @@ class AdminAuthService:
             )
         )
 
-    def _authorized_user_ids(self) -> set[str]:
-        return {
-            str(item.get("userId") or "").strip()
-            for item in self.config_service.get().get("approverTargets", [])
-            if item.get("enabled") is not False and str(item.get("userId") or "").strip()
-        }
-
     def _identity_from_profile(self, profile: dict[str, Any]) -> AdminIdentity:
         union_id = str(profile.get("unionId") or "").strip()
         user_id = str(profile.get("userId") or profile.get("userid") or "").strip()
@@ -191,8 +181,8 @@ class AdminAuthService:
         if not employee:
             raise AdminAuthError("当前钉钉账号不在有效人员目录中，请先同步人员目录")
         employee_user_id = str(employee.get("user_id") or "").strip()
-        if not employee_user_id or employee_user_id not in self._authorized_user_ids():
-            raise AdminAuthError("当前账号不是已启用的周报确认人，无权进入管理端")
+        if not employee_user_id:
+            raise AdminAuthError("当前钉钉账号缺少有效的人员标识")
         return AdminIdentity(
             user_id=employee_user_id,
             name=str(employee.get("employee_name") or profile.get("nick") or employee_user_id).strip(),
@@ -219,7 +209,7 @@ class AdminAuthService:
         payload = self._verify(token, kind="admin_session", now=now)
         user_id = str(payload.get("userId") or "").strip()
         employee = self.directory.lookup_by_user_id().get(user_id)
-        if not employee or user_id not in self._authorized_user_ids():
+        if not employee:
             raise AdminAuthError("管理权限已失效")
         return AdminIdentity(
             user_id=user_id,

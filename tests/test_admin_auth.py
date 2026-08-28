@@ -10,13 +10,16 @@ from app.services.admin_auth import AdminAuthError, AdminAuthService
 
 
 class FakeDirectory:
+    def __init__(self) -> None:
+        self.active = True
+
     def lookup_by_union_id(self):
         return {
             "union-reviewer": {
                 "user_id": "user-reviewer",
                 "employee_name": "审核人",
             }
-        }
+        } if self.active else {}
 
     def lookup_by_user_id(self):
         return {
@@ -24,23 +27,11 @@ class FakeDirectory:
                 "user_id": "user-reviewer",
                 "employee_name": "审核人",
             }
-        }
-
-
-class FakeConfig:
-    def __init__(self, user_id: str = "user-reviewer") -> None:
-        self.user_id = user_id
-
-    def get(self):
-        return {
-            "approverTargets": [
-                {"userId": self.user_id, "name": "审核人", "enabled": True}
-            ]
-        }
+        } if self.active else {}
 
 
 class AdminAuthTests(unittest.TestCase):
-    def service(self, *, approver: str = "user-reviewer") -> AdminAuthService:
+    def service(self, *, directory: FakeDirectory | None = None) -> AdminAuthService:
         app_settings = Settings(
             _env_file=None,
             app_env="production",
@@ -54,8 +45,7 @@ class AdminAuthTests(unittest.TestCase):
         )
         return AdminAuthService(
             app_settings=app_settings,
-            directory=FakeDirectory(),
-            config_service=FakeConfig(approver),
+            directory=directory or FakeDirectory(),
         )
 
     def test_login_url_uses_published_callback_without_exposing_secret(self) -> None:
@@ -75,7 +65,7 @@ class AdminAuthTests(unittest.TestCase):
         with self.assertRaises(AdminAuthError):
             service.verify_state(state, "another-browser")
 
-    def test_exchange_profile_issues_long_session_for_approver(self) -> None:
+    def test_exchange_profile_issues_long_session_for_active_employee(self) -> None:
         service = self.service()
         with patch(
             "app.services.admin_auth.request_json",
@@ -97,8 +87,8 @@ class AdminAuthTests(unittest.TestCase):
         with self.assertRaises(AdminAuthError):
             service.authenticate(token, now=int(time.time()) + 31 * 86400)
 
-    def test_non_approver_cannot_receive_admin_session(self) -> None:
-        service = self.service(approver="someone-else")
+    def test_active_employee_does_not_need_to_be_an_approver(self) -> None:
+        service = self.service()
         with patch(
             "app.services.admin_auth.request_json",
             side_effect=[
@@ -106,13 +96,13 @@ class AdminAuthTests(unittest.TestCase):
                 {"unionId": "union-reviewer"},
             ],
         ):
-            with self.assertRaisesRegex(AdminAuthError, "不是已启用的周报确认人"):
-                service.complete_login("one-time-auth-code")
+            token, identity = service.complete_login("one-time-auth-code")
+        self.assertEqual("user-reviewer", identity.user_id)
+        self.assertEqual("审核人", service.authenticate(token).name)
 
-    def test_session_is_revoked_when_user_leaves_approver_list(self) -> None:
-        config = FakeConfig()
-        service = self.service()
-        service.config_service = config
+    def test_session_is_revoked_when_user_leaves_active_directory(self) -> None:
+        directory = FakeDirectory()
+        service = self.service(directory=directory)
         with patch(
             "app.services.admin_auth.request_json",
             side_effect=[
@@ -121,9 +111,23 @@ class AdminAuthTests(unittest.TestCase):
             ],
         ):
             token, _ = service.complete_login("one-time-auth-code")
-        config.user_id = "someone-else"
+        directory.active = False
         with self.assertRaisesRegex(AdminAuthError, "权限已失效"):
             service.authenticate(token)
+
+    def test_unknown_directory_user_cannot_receive_admin_session(self) -> None:
+        directory = FakeDirectory()
+        directory.active = False
+        service = self.service(directory=directory)
+        with patch(
+            "app.services.admin_auth.request_json",
+            side_effect=[
+                {"accessToken": "short-lived-user-token"},
+                {"unionId": "union-reviewer"},
+            ],
+        ):
+            with self.assertRaisesRegex(AdminAuthError, "不在有效人员目录"):
+                service.complete_login("one-time-auth-code")
 
 
 if __name__ == "__main__":

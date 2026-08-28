@@ -13,7 +13,7 @@
 - **可追溯**：周报按周期和类型版本化；消息在外部调用前原子占位并保存 `processQueryKey`，支持安全重试和群/个人撤回。
 - **人员覆盖**：产品经理名单来自 AI 表，项目经理可由显式名单和 `bi_center` 职位关键词组成；管理页显示缺报人员并可人工发送一次性单聊提醒。
 - **子路径部署**：`APP_BASE_PATH`、相对静态资源和前端 API 解析均支持共享域名下的 `/weekly-assistant/`。
-- **钉钉身份登录**：管理页首次访问通过钉钉 OAuth 验证身份，只有当前启用的周报确认人可进入；会话使用独立密钥签名的 `HttpOnly` Cookie，`ADMIN_API_TOKEN` 仅保留为运维兜底。
+- **钉钉身份登录**：管理页首次访问通过钉钉 OAuth 验证身份；能匹配到 `bi_center` 有效在职人员目录的账号即可进入，不依赖周报确认人配置。会话使用独立密钥签名的 `HttpOnly` Cookie，`ADMIN_API_TOKEN` 仅保留为运维兜底。
 
 详细流程见 [架构与数据口径](docs/architecture.md)，开放平台配置见 [钉钉配置清单](docs/dingtalk-open-platform.md)。
 
@@ -45,7 +45,7 @@ copy .env.example .env
 | `TEAMBITION_SYNC_ENABLED` | TB 小时级同步的部署总开关；完成手动同步验收后再设为 `true` |
 | `ADMIN_API_TOKEN` | 管理接口令牌 |
 | `DINGTALK_SSO_ENABLED` / `ADMIN_SESSION_SECRET` | 启用管理页钉钉 OAuth 与服务端签名长会话；签名密钥必须与其他 Secret 独立 |
-| `ADMIN_SESSION_DAYS` | 管理会话有效期，默认 30 天；确认人名单变更会即时撤销权限 |
+| `ADMIN_SESSION_DAYS` | 管理会话有效期，默认 30 天；人员离职或从有效目录移除后会即时失去权限 |
 | `PUBLIC_BASE_URL` / `PUBLIC_LINK_SECRET` | 钉钉可访问的 HTTPS 周报与图片签名链接 |
 
 群的 `openConversationId`、应用机器人的 `robotCode`、个人接收人和审核人的 `userId` 在管理页配置，不进入环境变量。只给一个人推送时，在“从 bi_center 选择个人接收人”中选择该员工；页面会清空群目标，并同时设置个人预览、个人正式接收人和审核人。
