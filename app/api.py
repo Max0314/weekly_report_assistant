@@ -2,16 +2,23 @@ from __future__ import annotations
 
 import json
 import hmac
+from html import escape
 from typing import Any
 
 from fastapi import APIRouter, BackgroundTasks, Depends, Header, HTTPException, Query, Request
-from fastapi.responses import FileResponse, HTMLResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse
 from pydantic import BaseModel, Field
 
 from .config import settings
 from .db import db
 from .services.collector import source_collector
 from .services.archive import archive_service
+from .services.admin_auth import (
+    AdminAuthError,
+    OAUTH_STATE_COOKIE,
+    SESSION_COOKIE,
+    admin_auth_service,
+)
 from .services.delivery import delivery_service
 from .services.directory import directory_service
 from .services.model_config import ModelConfigError, model_config_service
@@ -58,9 +65,16 @@ class CoverageBody(BaseModel):
 
 
 def _admin_token(
+    request: Request,
     authorization: str | None = Header(default=None),
     x_admin_token: str | None = Header(default=None),
 ) -> str:
+    session_token = str(request.cookies.get(SESSION_COOKIE) or "").strip()
+    if session_token:
+        try:
+            return admin_auth_service.authenticate(session_token).actor
+        except AdminAuthError:
+            pass
     expected = settings.admin_api_token.strip()
     if not expected:
         raise HTTPException(status_code=503, detail="ADMIN_API_TOKEN is not configured")
@@ -76,6 +90,77 @@ def _raise_api_error(exc: Exception) -> None:
     if isinstance(exc, HTTPException):
         raise exc
     raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+def _auth_error_page(message: str, *, status_code: int = 400) -> HTMLResponse:
+    app_url = admin_auth_service.app_url if settings.public_base_url.strip() else "./"
+    safe_message = escape(str(message or "登录失败"))
+    safe_url = escape(app_url, quote=True)
+    return HTMLResponse(
+        f"""<!doctype html><html lang=\"zh-CN\"><head><meta charset=\"utf-8\">
+<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><title>登录未完成</title>
+<style>body{{font:16px/1.6 system-ui;margin:0;background:#f5f7fb;color:#16365c}}main{{max-width:520px;margin:12vh auto;padding:32px;background:#fff;border-radius:18px;box-shadow:0 18px 50px #17375e18}}a{{display:inline-block;margin-top:12px;padding:10px 18px;border-radius:10px;background:#2563d9;color:#fff;text-decoration:none}}</style></head>
+<body><main><h1>登录未完成</h1><p>{safe_message}</p><a href=\"{safe_url}\">返回周报助手</a></main></body></html>""",
+        status_code=status_code,
+    )
+
+
+@router.get("/api/auth/session")
+def auth_session(request: Request) -> dict[str, Any]:
+    return admin_auth_service.session_status(str(request.cookies.get(SESSION_COOKIE) or ""))
+
+
+@router.get("/api/auth/dingtalk/login")
+def dingtalk_login(next_path: str = Query(default="", alias="next")) -> RedirectResponse:
+    try:
+        authorize_url, nonce, _ = admin_auth_service.begin_login(next_path)
+    except AdminAuthError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    response = RedirectResponse(authorize_url, status_code=302)
+    response.set_cookie(
+        OAUTH_STATE_COOKIE,
+        nonce,
+        max_age=600,
+        httponly=True,
+        secure=admin_auth_service.app_url.startswith("https://"),
+        samesite="lax",
+        path=admin_auth_service.cookie_path,
+    )
+    return response
+
+
+@router.get("/api/auth/dingtalk/callback", response_model=None)
+def dingtalk_callback(request: Request):
+    query = request.query_params
+    auth_code = str(query.get("authCode") or query.get("code") or "")
+    state = str(query.get("state") or "")
+    nonce = str(request.cookies.get(OAUTH_STATE_COOKIE) or "")
+    try:
+        next_path = admin_auth_service.verify_state(state, nonce)
+        session_token, _ = admin_auth_service.complete_login(auth_code)
+    except AdminAuthError as exc:
+        return _auth_error_page(str(exc))
+    except Exception:
+        return _auth_error_page("钉钉登录暂时不可用，请稍后重试", status_code=502)
+    response = RedirectResponse(f"{admin_auth_service.app_url}{next_path}", status_code=302)
+    response.set_cookie(
+        SESSION_COOKIE,
+        session_token,
+        max_age=settings.admin_session_days * 86400,
+        httponly=True,
+        secure=admin_auth_service.app_url.startswith("https://"),
+        samesite="lax",
+        path=admin_auth_service.cookie_path,
+    )
+    response.delete_cookie(OAUTH_STATE_COOKIE, path=admin_auth_service.cookie_path)
+    return response
+
+
+@router.post("/api/auth/logout")
+def auth_logout() -> JSONResponse:
+    response = JSONResponse({"ok": True})
+    response.delete_cookie(SESSION_COOKIE, path=admin_auth_service.cookie_path)
+    return response
 
 
 @router.get("/api/health")
@@ -129,6 +214,7 @@ def readiness(_: str = Depends(_admin_token)) -> dict[str, Any]:
         ),
         "checks": {
             "dingtalkApp": settings.dingtalk_configured,
+            "adminSso": settings.dingtalk_sso_configured,
             "aiTable": settings.aitable_configured,
             "biCenter": settings.bi_center_configured,
             "biCenterDetail": {
@@ -409,6 +495,15 @@ def get_report(report_id: int, _: str = Depends(_admin_token)) -> dict[str, Any]
         _raise_api_error(exc)
 
 
+@router.get("/api/reports/{report_id}/public-urls")
+def get_report_public_urls(report_id: int, _: str = Depends(_admin_token)) -> dict[str, str]:
+    try:
+        report_service.get(report_id)
+        return report_renderer.public_urls(report_id)
+    except Exception as exc:
+        _raise_api_error(exc)
+
+
 @router.put("/api/reports/{report_id}/sections")
 def update_report(report_id: int, body: SectionsBody, actor: str = Depends(_admin_token)) -> dict[str, Any]:
     try:
@@ -508,7 +603,7 @@ def public_report(report_id: int, expires: int, token: str) -> HTMLResponse:
         _raise_api_error(exc)
     if report["workflowState"] in {"recalled", "cancelled"}:
         raise HTTPException(status_code=410, detail="report is no longer available")
-    return HTMLResponse(report_html(report))
+    return HTMLResponse(report_html(report, interactive=True))
 
 
 @router.get("/api/public/reports/{report_id}/image")

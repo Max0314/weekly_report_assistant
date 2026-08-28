@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <meta name="theme-color" content="#f6f8fb">
   <title>产品与项目经理周报助手</title>
-  <link rel="stylesheet" href="static/styles.css?v=20260826a">
+  <link rel="stylesheet" href="static/styles.css?v=20260828d">
 </head>
 <body>
   <div class="app-shell">
@@ -19,12 +19,19 @@
         <span id="busy" class="busy-pill" aria-live="polite"></span>
         <button id="refreshAll" class="secondary compact" type="button">刷新数据</button>
         <details class="auth-menu">
-          <summary>管理令牌</summary>
+          <summary id="authSummary">登录状态</summary>
           <div class="auth-popover">
-            <label for="token">ADMIN_API_TOKEN</label>
-            <input id="token" type="password" autocomplete="off" placeholder="输入管理令牌">
-            <button id="saveToken" type="button">保存并连接</button>
-            <p>令牌只保存在当前浏览器，不会写入服务端配置。</p>
+            <strong id="authIdentity">正在检查钉钉登录状态</strong>
+            <p>管理权限跟随周报“确认人”名单，无需在页面填写密钥。</p>
+            <button id="loginWithDingTalk" type="button" hidden>使用钉钉登录</button>
+            <button id="logoutSession" class="secondary" type="button" hidden>退出当前账号</button>
+            <details class="maintenance-auth">
+              <summary>运维令牌兜底</summary>
+              <label for="token">ADMIN_API_TOKEN</label>
+              <input id="token" type="password" autocomplete="off" placeholder="仅故障排查时输入">
+              <button id="saveToken" type="button">使用运维令牌连接</button>
+              <p>令牌只保存在当前浏览器，不会写入服务端配置。</p>
+            </details>
           </div>
         </details>
       </div>
@@ -48,7 +55,7 @@
       </nav>
       <div class="sidebar-footer">
         <span class="status-dot"></span>
-        <div><strong id="sidebarReadyText">等待连接</strong><span id="sidebarReadyDetail">保存管理令牌后读取状态</span></div>
+        <div><strong id="sidebarReadyText">正在登录</strong><span id="sidebarReadyDetail">检查钉钉账号与管理权限</span></div>
       </div>
     </aside>
     <button id="sidebarBackdrop" class="sidebar-backdrop" type="button" aria-label="关闭导航"></button>
@@ -156,7 +163,7 @@
         <div class="page-width">
           <section class="page-hero compact-hero">
             <div><p class="eyebrow">REPORT CENTER</p><h2>周报展示</h2><p>查看当前成稿、正式版本和历史记录，并完成编辑、预览与审核。</p></div>
-            <div class="actions"><button data-action="sync-source" class="secondary" type="button">同步事实</button><select id="reportKind" aria-label="周报类型"><option value="combined">综合版</option><option value="product">产品经理版</option><option value="project">项目经理版</option></select><button data-action="generate" type="button">生成新周报</button></div>
+            <div class="actions"><button id="openLatestReport" class="ghost" type="button" disabled>外部打开最新周报 ↗</button><button data-action="sync-source" class="secondary" type="button">同步事实</button><select id="reportKind" aria-label="周报类型"><option value="combined">综合版</option><option value="product">产品经理版</option><option value="project">项目经理版</option></select><button data-action="generate" type="button">生成新周报</button></div>
           </section>
 
           <section class="panel">
@@ -329,10 +336,10 @@
       <label>下周计划<textarea id="section-nextPlans"></textarea></label>
       <label>需协调支持<textarea id="section-supportNeeds"></textarea></label>
     </div>
-    <div class="dialog-actions"><span id="reportDirtyHint">修改后保存会清除旧图片和审核状态。</span><button id="saveSections" type="button">保存周报正文</button></div>
-    <details class="source-details"><summary>查看本版纳入的事实清单</summary><div id="reportSources" class="source-list"></div></details>
+    <div class="dialog-actions"><div class="dialog-action-copy"><strong>编辑周报正文</strong><span id="reportDirtyHint">修改后保存会清除旧图片和审核状态。</span></div><div class="actions"><button id="cancelSections" class="secondary" type="button">取消</button><button id="saveSections" type="button" disabled>保存修改</button></div></div>
+    <details id="reportSourceDetails" class="source-details"><summary>查看本版纳入的事实清单</summary><div id="reportSources" class="source-list"></div></details>
   </dialog>
 
-  <script src="static/app.js?v=20260826a"></script>
+  <script src="static/app.js?v=20260828d"></script>
 </body>
 </html>

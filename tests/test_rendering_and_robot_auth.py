@@ -25,16 +25,23 @@ class RenderingAndAuthTests(unittest.TestCase):
         self.assertIn("<p>重点项目按计划推进！</p>", output)
 
     def test_report_html_escapes_source_text(self) -> None:
-        output = report_html({
+        report = {
             "id": 1, "title": "<script>alert(1)</script>", "version": 1,
             "window": {"label": "本周"}, "metrics": {}, "sections": {},
             "sources": [{"title": "<b>事项</b>", "category": "测试"}],
-        })
+        }
+        output = report_html(report, interactive=True)
         self.assertNotIn("<script>alert(1)</script>", output)
         self.assertIn("&lt;script&gt;", output)
         self.assertIn("&lt;b&gt;事项&lt;/b&gt;", output)
         self.assertIn('data-label="事项"', output)
         self.assertIn("thead{display:none}", output)
+        self.assertIn('<details class="card table-card fact-details">', output)
+        self.assertNotIn('<details class="card table-card fact-details" open>', output)
+        self.assertIn('class="readonly-pill">只读浏览</span>', output)
+        self.assertIn('class="external-open"', output)
+        self.assertIn("max-width:1480px", output)
+        self.assertNotIn('class="external-open"', report_html(report))
 
     def test_sensitive_robot_command_requires_approver_and_configured_group(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

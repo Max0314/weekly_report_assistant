@@ -22,6 +22,8 @@ class Settings(BaseSettings):
     app_base_path: str = ""
     public_base_url: str = ""
     admin_api_token: str = ""
+    admin_session_secret: str = ""
+    admin_session_days: int = Field(default=30, ge=1, le=180)
     public_link_secret: str = ""
     public_link_lifetime_days: int = Field(default=30, ge=1, le=365)
 
@@ -31,6 +33,7 @@ class Settings(BaseSettings):
     dingtalk_app_secret: str = ""
     dingtalk_aitable_operator_id: str = ""
     dingtalk_callback_token: str = ""
+    dingtalk_sso_enabled: bool = False
 
     aitable_base_id: str = ""
     bi_center_base_url: str = "http://127.0.0.1:39054"
@@ -134,6 +137,15 @@ class Settings(BaseSettings):
     @property
     def dingtalk_configured(self) -> bool:
         return bool(self.dingtalk_app_key.strip() and self.dingtalk_app_secret.strip())
+
+    @property
+    def dingtalk_sso_configured(self) -> bool:
+        return bool(
+            self.dingtalk_sso_enabled
+            and self.dingtalk_configured
+            and self.public_base_url.strip()
+            and self.admin_session_secret.strip()
+        )
 
     @property
     def aitable_configured(self) -> bool:

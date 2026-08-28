@@ -11,10 +11,11 @@
    PUBLIC_BASE_URL=https://neoflow-cn.neo-net.com/weekly-assistant
    ```
 
-3. 生成不同的长随机值用于 `ADMIN_API_TOKEN`、`PUBLIC_LINK_SECRET` 和 `DINGTALK_CALLBACK_TOKEN`。
+3. 生成不同的长随机值用于 `ADMIN_API_TOKEN`、`ADMIN_SESSION_SECRET`、`PUBLIC_LINK_SECRET` 和 `DINGTALK_CALLBACK_TOKEN`，设置 `DINGTALK_SSO_ENABLED=true`。四个值不得复用。
 4. 执行 `docker compose up -d --build`，等待 Chromium 依赖安装和健康检查通过。
 5. 从 `bi_center` 正式容器的受保护运行环境安全复制 `TEAMBITION_SOURCE=native`、`TEAMBITION_OPEN_API_BASE`、`TEAMBITION_OPEN_APP_ID`、`TEAMBITION_OPEN_APP_SECRET` 和 `TEAMBITION_OPEN_ORGANIZATION_ID`，不在终端输出值；保持 `TEAMBITION_SYNC_ENABLED=false`，先完成一次手动同步和看板核验。
-6. 打开管理页，按“人员 → AI 表 → TB → 覆盖检查 → 生成 → 正文核对 → 图片 → 个人预览 → 审核 → 个人正式发送”的顺序联调；确认消息链路后再配置字段映射并启用存档回写。
+6. 钉钉开放平台新增 `Contact.User.Read`，配置并发布登录回调 `${PUBLIC_BASE_URL}/api/auth/dingtalk/callback`。首次访问管理页应自动进入钉钉授权，并且只有“确认人”名单中的在职账号能够进入。
+7. 打开管理页，按“人员 → AI 表 → TB → 覆盖检查 → 生成 → 正文核对 → 图片 → 个人预览 → 审核 → 个人正式发送”的顺序联调；确认消息链路后再配置字段映射并启用存档回写。
 
 ## Nginx 子路径
 
@@ -27,6 +28,19 @@ location = /weekly-assistant {
 
 # 查询参数中包含独立回调 Token，因此关闭该路径的访问日志。
 location = /weekly-assistant/api/dingtalk/robot/callback {
+    access_log off;
+
+    proxy_pass http://127.0.0.1:39022;
+    proxy_http_version 1.1;
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+    proxy_set_header X-Forwarded-Prefix /weekly-assistant;
+}
+
+# OAuth 回调查询参数中包含一次性 authCode 和签名 state，同样关闭访问日志。
+location = /weekly-assistant/api/auth/dingtalk/callback {
     access_log off;
 
     proxy_pass http://127.0.0.1:39022;
@@ -73,12 +87,19 @@ curl -I https://neoflow-cn.neo-net.com/weekly-assistant/static/app.js
 https://neoflow-cn.neo-net.com/weekly-assistant/api/dingtalk/robot/callback?token=<DINGTALK_CALLBACK_TOKEN>
 ```
 
+机器人消息回调与管理页 OAuth 回调是两条独立链路，登录回调为：
+
+```text
+https://neoflow-cn.neo-net.com/weekly-assistant/api/auth/dingtalk/callback
+```
+
 生产环境未设置 `DINGTALK_CALLBACK_TOKEN` 时，回调固定返回 `503`，不会把未经保护的事件加入队列。
+容器的 Uvicorn 关闭通用访问日志，避免机器人 Token、OAuth `authCode/state` 进入 Docker 日志；应用错误和生命周期日志仍保留。
 
 ## 健康与诊断
 
 - `/api/health` 仅检查服务与 SQLite。
-- `/api/readiness` 需要管理令牌，显示钉钉、AI 表、最近源表快照、bi_center、TB 快照、最近模型连接测试、回调鉴权、公开链接、个人/群目标、归档配置和人员缓存状态，不返回密钥。应用配置齐全但 AI 表或已纳入周报的 TB 快照最近同步失败、无成功成员或过期时，总体状态仍为未就绪。
+- `/api/readiness` 需要有效钉钉管理会话或运维令牌，显示钉钉、AI 表、最近源表快照、bi_center、TB 快照、最近模型连接测试、回调鉴权、公开链接、个人/群目标、归档配置和人员缓存状态，不返回密钥。应用配置齐全但 AI 表或已纳入周报的 TB 快照最近同步失败、无成功成员或过期时，总体状态仍为未就绪。
 - `/api/model-config` 需要管理令牌，返回当前模型、来源与脱敏 Key；连接测试可使用未保存候选配置，留空 Key 时安全复用当前生效 Key。
 - `/api/teambition/status`、`/api/teambition/dashboard` 和 `POST /api/sync/teambition` 均需要管理令牌；状态接口只返回来源、配置布尔值、数量和最近批次，不返回 App ID、Secret、组织 ID 或访问令牌。
 - `/api/coverage` 显示预期产品/项目经理与本周有效事项覆盖；`POST /api/coverage/remind` 仅在管理员确认后发送一次性缺报单聊。

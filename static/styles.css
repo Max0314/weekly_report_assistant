@@ -56,9 +56,14 @@ textarea { min-height: 112px; resize: vertical; line-height: 1.6; }
 .auth-menu { position: relative; }
 .auth-menu summary { list-style: none; padding: 8px 12px; color: #44516a; border: 1px solid var(--line); border-radius: 10px; background: #fff; font-size: 13px; font-weight: 700; cursor: pointer; }
 .auth-menu summary::-webkit-details-marker { display: none; }
+.auth-menu.invalid summary { color: var(--danger); border-color: #efb8b1; background: var(--danger-soft); }
 .auth-popover { position: absolute; top: calc(100% + 10px); right: 0; z-index: 60; width: min(360px, calc(100vw - 28px)); padding: 16px; border: 1px solid var(--line); border-radius: 16px; background: #fff; box-shadow: 0 24px 60px rgba(23, 32, 51, .18); }
 .auth-popover button { width: 100%; margin-top: 10px; }
 .auth-popover p { margin: 10px 0 0; color: var(--muted); font-size: 11px; line-height: 1.5; }
+.auth-popover > strong { display: block; font-size: 14px; }
+.maintenance-auth { margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--line); }
+.auth-menu .maintenance-auth summary { padding: 0; border: 0; background: transparent; color: var(--muted); font-size: 11px; }
+.maintenance-auth label { display: block; margin: 12px 0 6px; color: var(--muted); font-size: 11px; font-weight: 700; }
 
 .app-sidebar { grid-area: sidebar; position: sticky; top: var(--header-height); align-self: start; display: flex; flex-direction: column; height: calc(100vh - var(--header-height)); overflow-y: auto; border-right: 1px solid var(--line); background: rgba(255, 255, 255, .88); }
 .brand { display: flex; align-items: center; gap: 11px; margin: 18px 22px 3px; padding: 0 0 17px; color: var(--ink); border-bottom: 1px solid var(--soft-line); cursor: default; pointer-events: none; user-select: none; }
@@ -174,9 +179,15 @@ textarea { min-height: 112px; resize: vertical; line-height: 1.6; }
 .report .actions { justify-content: flex-end; max-width: 510px; }
 .report .actions button { padding: 7px 9px; font-size: 11px; }
 .report .actions .danger { color: var(--danger); background: var(--danger-soft); }
+.report-more { position: relative; }
+.report-more > summary { list-style: none; padding: 7px 9px; color: #566279; border: 1px solid var(--line); border-radius: 9px; background: #fff; cursor: pointer; font-size: 11px; font-weight: 700; }
+.report-more > summary::-webkit-details-marker { display: none; }
+.report-more-menu { position: absolute; top: calc(100% + 7px); right: 0; z-index: 8; display: grid; min-width: 150px; gap: 6px; padding: 8px; border: 1px solid var(--line); border-radius: 11px; background: #fff; box-shadow: 0 16px 36px rgba(23, 32, 51, .16); }
+.report-more-menu button { width: 100%; white-space: nowrap; }
 .empty-state { padding: 38px 20px; color: var(--muted); border: 1px dashed #cad4e1; border-radius: 14px; text-align: center; background: #fafbfd; }
 .empty-state strong { color: #4f5b70; }
 .empty-state p { margin: 7px 0 0; font-size: 12px; }
+.empty-state .actions { justify-content: center; margin-top: 14px; }
 
 .form-grid { display: grid; gap: 15px; }
 .four-cols { grid-template-columns: repeat(4, minmax(0, 1fr)); }
@@ -303,8 +314,11 @@ dialog::backdrop { background: rgba(20, 29, 44, .58); backdrop-filter: blur(3px)
 .dialog-head p:not(.eyebrow) { margin: 6px 0 0; color: var(--muted); font-size: 12px; }
 .section-editor-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 15px; padding: 24px; }
 .section-editor-grid textarea { min-height: 150px; }
-.dialog-actions { display: flex; align-items: center; justify-content: space-between; gap: 18px; padding: 0 24px 24px; }
-.dialog-actions span { color: var(--muted); font-size: 11px; }
+.dialog-actions { position: sticky; bottom: 0; z-index: 2; display: flex; align-items: center; justify-content: space-between; gap: 18px; padding: 14px 24px; border-top: 1px solid var(--line); background: rgba(255, 255, 255, .97); backdrop-filter: blur(12px); }
+.dialog-action-copy strong, .dialog-action-copy span { display: block; }
+.dialog-action-copy strong { font-size: 12px; }
+.dialog-action-copy span { margin-top: 4px; color: var(--muted); font-size: 11px; }
+.dialog-action-copy span.dirty { color: var(--amber); font-weight: 700; }
 .source-details { margin: 0 24px 24px; border: 1px solid var(--line); border-radius: 13px; }
 .source-details > summary { padding: 13px 15px; color: #4e5d74; cursor: pointer; font-size: 12px; font-weight: 700; }
 .source-list { padding: 0 14px 14px; }

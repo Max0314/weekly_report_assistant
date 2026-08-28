@@ -58,7 +58,7 @@ def _summary_html(value: Any) -> str:
     return "".join(f"<p>{html.escape(sentence)}</p>" for sentence in sentences)
 
 
-def report_html(report: dict[str, Any]) -> str:
+def report_html(report: dict[str, Any], *, interactive: bool = False) -> str:
     sections = report.get("sections") or {}
     metrics = report.get("metrics") or {}
     window = report.get("window") or {}
@@ -77,14 +77,29 @@ def report_html(report: dict[str, Any]) -> str:
         "</tr>"
         for item in sources[:80]
     )
+    interactive_actions = (
+        '<div class="hero-actions"><span class="readonly-pill">只读浏览</span>'
+        '<a id="externalOpen" class="external-open" target="_blank" rel="noopener noreferrer" '
+        'aria-label="在外部浏览器打开周报">↗ 外部打开</a></div>'
+        if interactive else ""
+    )
+    interactive_script = (
+        '<script>document.getElementById("externalOpen").href=window.location.href;</script>'
+        if interactive else ""
+    )
     return f"""<!doctype html>
 <html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>{html.escape(str(report.get('title') or '周报'))}</title>
 <style>
-*{{box-sizing:border-box}} body{{margin:0;background:#eef3f9;color:#142033;font-family:'Noto Sans CJK SC','Microsoft YaHei',sans-serif}}
-.page{{width:1480px;margin:0 auto;background:#f8fafc;min-height:900px;padding:48px}}
+*{{box-sizing:border-box}} html{{background:#eef3f9}} body{{margin:0;overflow-x:hidden;background:#eef3f9;color:#142033;font-family:'Noto Sans CJK SC','Microsoft YaHei',sans-serif}}
+.page{{width:100%;max-width:1480px;margin:0 auto;background:#f8fafc;min-height:900px;padding:48px}}
 .hero{{border-radius:28px;padding:38px 44px;color:#fff;background:linear-gradient(135deg,#173b68,#24689d 56%,#0f8a82)}}
+.hero-heading{{display:flex;align-items:flex-start;justify-content:space-between;gap:24px}}
 .hero h1{{font-size:42px;margin:0 0 14px}} .hero p{{font-size:20px;margin:0;opacity:.9}}
+.hero-actions{{display:flex;align-items:center;gap:8px;flex:0 0 auto}}
+.readonly-pill{{display:inline-flex;flex:0 0 auto;padding:8px 13px;border:1px solid rgba(255,255,255,.3);border-radius:999px;background:rgba(255,255,255,.12);font-size:14px;font-weight:700}}
+.external-open{{display:inline-flex;align-items:center;padding:8px 13px;border-radius:999px;background:#fff;color:#17517a;text-decoration:none;font-size:14px;font-weight:800;box-shadow:0 5px 14px rgba(0,0,0,.12)}}
+.external-open:hover{{background:#eff8ff}}
 .stats{{display:grid;grid-template-columns:repeat(5,1fr);gap:16px;margin:24px 0}}
 .stat,.metric,.card{{background:#fff;border:1px solid #dce5ef;border-radius:18px;box-shadow:0 8px 24px rgba(23,59,104,.06)}}
 .stat{{padding:20px}} .stat span,.metric span{{display:block;color:#5d6c80;font-size:15px}} .stat strong{{font-size:34px;color:#173b68}}
@@ -98,14 +113,25 @@ def report_html(report: dict[str, Any]) -> str:
 .section-list li::before{{content:counter(section-item);display:flex;align-items:center;justify-content:center;width:24px;height:24px;margin-top:3px;border-radius:50%;background:#e8f1f8;color:#24689d;font-size:13px;font-weight:700}}
 .risk h2{{color:#b24b2d}} .metrics{{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin:24px 0}}
 .metric{{padding:16px}} .metric strong{{font-size:25px;color:#24689d}}
-.table-card{{margin-top:24px;padding:26px 30px}} .table-card h2{{margin-bottom:18px}}
+.table-card{{margin-top:24px;padding:0;overflow:hidden}}
+.table-card > summary{{display:flex;align-items:center;justify-content:space-between;gap:18px;padding:22px 30px;cursor:pointer;list-style:none}}
+.table-card > summary::-webkit-details-marker{{display:none}}
+.table-card > summary h2{{margin:0}}
+.table-card > summary span{{color:#718096;font-size:14px;font-weight:600}}
+.table-card > summary span::after{{content:'展开'}}
+.table-card[open] > summary span::after{{content:'收起'}}
+.fact-table-wrap{{padding:0 30px 26px}}
 table{{width:100%;border-collapse:collapse;table-layout:fixed}} th,td{{padding:13px 12px;border-bottom:1px solid #e4eaf1;text-align:left;font-size:15px;line-height:1.55;vertical-align:top;overflow-wrap:anywhere}} th{{color:#526276;background:#f3f6fa}}
 th:nth-child(1){{width:18%}} th:nth-child(3){{width:11%}} th:nth-child(4){{width:12%}} th:nth-child(5){{width:11%}}
 .fact-category,.fact-status{{color:#526276}} .fact-title{{font-weight:600;color:#1c3656}}
 .foot{{margin-top:26px;color:#718096;text-align:right;font-size:14px}} .empty{{color:#8492a6}}
+@media(max-width:1200px){{
+  .page{{padding:28px}}
+  .hero{{padding:30px 34px}}
+}}
 @media(max-width:900px){{
   .page{{width:100%;padding:14px}}
-  .hero{{padding:22px 20px;border-radius:20px}} .hero h1{{font-size:29px;line-height:1.22;margin-bottom:9px}} .hero p{{font-size:14px;line-height:1.5}}
+  .hero{{padding:22px 20px;border-radius:20px}} .hero-heading{{gap:14px}} .hero h1{{font-size:29px;line-height:1.22;margin-bottom:9px}} .hero p{{font-size:14px;line-height:1.5}} .readonly-pill{{padding:6px 9px;font-size:11px}}
   .stats{{grid-template-columns:repeat(3,1fr);gap:8px;margin:14px 0}}
   .stat{{padding:12px;border-radius:14px}} .stat span{{font-size:12px}} .stat strong{{font-size:24px;line-height:1.2}}
   .lead{{padding:17px 18px;border-left-width:5px;border-radius:15px;font-size:16px;line-height:1.75}} .lead p+p{{margin-top:7px}}
@@ -115,7 +141,9 @@ th:nth-child(1){{width:18%}} th:nth-child(3){{width:11%}} th:nth-child(4){{width
   .card{{padding:18px;border-radius:15px}} .card h2{{font-size:20px;margin-bottom:12px}}
   .section-list li{{grid-template-columns:24px minmax(0,1fr);gap:8px;font-size:15.5px;line-height:1.7;margin:10px 0}}
   .section-list li::before{{width:21px;height:21px;margin-top:3px;font-size:11px}}
-  .table-card{{margin-top:14px;padding:18px}} .table-card h2{{font-size:20px;margin-bottom:12px}}
+  .table-card{{margin-top:14px}}
+  .table-card > summary{{padding:16px 18px}} .table-card > summary h2{{font-size:20px}} .table-card > summary span{{font-size:12px}}
+  .fact-table-wrap{{padding:0 18px 18px}}
   table,tbody,tr,td{{display:block;width:100%}} thead{{display:none}}
   .fact-row{{margin-bottom:10px;padding:12px 13px;border:1px solid #e1e8f0;border-radius:13px;background:#f8fafc}}
   .fact-row:last-child{{margin-bottom:0}}
@@ -126,11 +154,11 @@ th:nth-child(1){{width:18%}} th:nth-child(3){{width:11%}} th:nth-child(4){{width
   .foot{{margin-top:16px;font-size:11px;line-height:1.6;text-align:left}}
 }}
 @media(max-width:520px){{
-  .page{{padding:10px}} .hero{{padding:20px 17px}} .hero h1{{font-size:26px}}
+  .page{{padding:10px}} .hero{{padding:20px 17px}} .hero-heading{{display:block}} .hero h1{{font-size:26px}} .hero-actions{{margin-top:14px}} .readonly-pill,.external-open{{padding:6px 9px;font-size:11px}}
   .metrics{{grid-template-columns:repeat(2,1fr)}}
 }}
 </style></head><body><main class="page">
-<section class="hero"><h1>{html.escape(str(report.get('title') or '产品与项目管理周报'))}</h1><p>{html.escape(str(window.get('label') or report.get('periodKey') or ''))} · v{int(report.get('version') or 0)}</p></section>
+<section class="hero"><div class="hero-heading"><div><h1>{html.escape(str(report.get('title') or '产品与项目管理周报'))}</h1><p>{html.escape(str(window.get('label') or report.get('periodKey') or ''))} · v{int(report.get('version') or 0)}</p></div>{interactive_actions}</div></section>
 <section class="stats">
 <div class="stat"><span>纳入事项</span><strong>{int(metrics.get('itemCount') or 0)}</strong></div>
 <div class="stat"><span>涉及负责人</span><strong>{int(metrics.get('managerCount') or 0)}</strong></div>
@@ -147,9 +175,9 @@ th:nth-child(1){{width:18%}} th:nth-child(3){{width:11%}} th:nth-child(4){{width
 <article class="card"><h2>下周计划</h2>{_section_html(sections.get('nextPlans'))}</article>
 <article class="card"><h2>需协调与支持</h2>{_section_html(sections.get('supportNeeds'))}</article>
 </section>
-<section class="card table-card"><h2>本周事实清单</h2><table><thead><tr><th>类别</th><th>事项</th><th>状态</th><th>负责人</th><th>截止</th></tr></thead><tbody>{source_rows or '<tr><td colspan="5" class="empty">暂无</td></tr>'}</tbody></table></section>
+<details class="card table-card fact-details"><summary><h2>本周事实清单</h2><span aria-hidden="true"></span></summary><div class="fact-table-wrap"><table><thead><tr><th>类别</th><th>事项</th><th>状态</th><th>负责人</th><th>截止</th></tr></thead><tbody>{source_rows or '<tr><td colspan="5" class="empty">暂无</td></tr>'}</tbody></table></div></details>
 <div class="foot">由周报助手根据 AI 多维表快照生成；统计数字由程序计算，AI 仅用于归纳文案。</div>
-</main></body></html>"""
+</main>{interactive_script}</body></html>"""
 
 
 class ReportRenderer:

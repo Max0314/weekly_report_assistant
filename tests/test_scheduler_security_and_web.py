@@ -183,6 +183,7 @@ class SchedulerSecurityAndWebTests(unittest.TestCase):
         html = (root / "static" / "index.html").read_text(encoding="utf-8")
         script = (root / "static" / "app.js").read_text(encoding="utf-8")
         nginx = (root / "deploy" / "nginx-weekly-assistant.conf").read_text(encoding="utf-8")
+        dockerfile = (root / "Dockerfile").read_text(encoding="utf-8")
         self.assertNotIn('href="/static/', html)
         self.assertNotIn('src="/static/', html)
         self.assertIn("resolveUrl(path)", script)
@@ -205,13 +206,23 @@ class SchedulerSecurityAndWebTests(unittest.TestCase):
         self.assertIn('api("/api/config"', script)
         self.assertIn('api("/api/model-config"', script)
         self.assertIn('api("/api/model-config/test"', script)
-        self.assertIn("styles.css?v=20260826a", html)
-        self.assertIn("app.js?v=20260826a", html)
+        self.assertIn("styles.css?v=20260828d", html)
+        self.assertIn("app.js?v=20260828d", html)
+        self.assertIn('id="cancelSections"', html)
+        self.assertIn('id="openLatestReport"', html)
+        self.assertIn('data-route="reports"', html)
+        self.assertIn('"browse", "外部打开 ↗"', script)
+        self.assertIn('"edit", "编辑正文"', script)
+        self.assertIn('api/auth/dingtalk/login', script)
+        self.assertIn('api/auth/session', script)
+        self.assertIn('id="loginWithDingTalk"', html)
         self.assertIn("proxy_pass http://127.0.0.1:39022;", nginx)
         self.assertNotIn("proxy_pass http://127.0.0.1:39022/;", nginx)
         self.assertIn(
             "proxy_pass http://127.0.0.1:39022/weekly-assistant/static/;", nginx
         )
+        self.assertIn("location = /weekly-assistant/api/auth/dingtalk/callback", nginx)
+        self.assertIn("--no-access-log", dockerfile)
 
     def test_readiness_exposes_safe_bi_center_directory_metadata(self) -> None:
         workflow = {

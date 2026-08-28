@@ -13,6 +13,7 @@
 - **可追溯**：周报按周期和类型版本化；消息在外部调用前原子占位并保存 `processQueryKey`，支持安全重试和群/个人撤回。
 - **人员覆盖**：产品经理名单来自 AI 表，项目经理可由显式名单和 `bi_center` 职位关键词组成；管理页显示缺报人员并可人工发送一次性单聊提醒。
 - **子路径部署**：`APP_BASE_PATH`、相对静态资源和前端 API 解析均支持共享域名下的 `/weekly-assistant/`。
+- **钉钉身份登录**：管理页首次访问通过钉钉 OAuth 验证身份，只有当前启用的周报确认人可进入；会话使用独立密钥签名的 `HttpOnly` Cookie，`ADMIN_API_TOKEN` 仅保留为运维兜底。
 
 详细流程见 [架构与数据口径](docs/architecture.md)，开放平台配置见 [钉钉配置清单](docs/dingtalk-open-platform.md)。
 
@@ -26,7 +27,7 @@ copy .env.example .env
 .venv\Scripts\uvicorn.exe app.main:app --host 0.0.0.0 --port 39057 --workers 1
 ```
 
-访问 `http://127.0.0.1:39057/`。管理端始终要求 `ADMIN_API_TOKEN`。不要把真实密钥提交到 Git。
+访问 `http://127.0.0.1:39057/`。本地未启用钉钉 SSO 时可使用 `ADMIN_API_TOKEN`；正式环境应启用钉钉登录。不要把真实密钥提交到 Git。
 
 ## 必填配置
 
@@ -43,9 +44,13 @@ copy .env.example .env
 | `TEAMBITION_DINGTALK_APP_KEY` / `TEAMBITION_DINGTALK_APP_SECRET` | dingtalk 模式的企业内部应用凭证；留空时复用本服务的 `DINGTALK_APP_KEY` / `DINGTALK_APP_SECRET` |
 | `TEAMBITION_SYNC_ENABLED` | TB 小时级同步的部署总开关；完成手动同步验收后再设为 `true` |
 | `ADMIN_API_TOKEN` | 管理接口令牌 |
+| `DINGTALK_SSO_ENABLED` / `ADMIN_SESSION_SECRET` | 启用管理页钉钉 OAuth 与服务端签名长会话；签名密钥必须与其他 Secret 独立 |
+| `ADMIN_SESSION_DAYS` | 管理会话有效期，默认 30 天；确认人名单变更会即时撤销权限 |
 | `PUBLIC_BASE_URL` / `PUBLIC_LINK_SECRET` | 钉钉可访问的 HTTPS 周报与图片签名链接 |
 
 群的 `openConversationId`、应用机器人的 `robotCode`、个人接收人和审核人的 `userId` 在管理页配置，不进入环境变量。只给一个人推送时，在“从 bi_center 选择个人接收人”中选择该员工；页面会清空群目标，并同时设置个人预览、个人正式接收人和审核人。
+
+管理页 OAuth 需在钉钉开放平台为企业内部应用新增 `Contact.User.Read`，将回调地址配置为 `${PUBLIC_BASE_URL}/api/auth/dingtalk/callback`，并发布包含该权限和回调配置的应用版本。OAuth 仅读取当前登录用户身份；AI 多维表、机器人和 TB 的服务端接口继续使用各自既有凭证。
 
 个人推送对应的核心配置形状为：
 

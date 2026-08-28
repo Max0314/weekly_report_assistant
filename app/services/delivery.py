@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 import uuid
 from typing import Any
 
@@ -56,20 +57,63 @@ class DeliveryService:
     def _markdown(report: dict[str, Any], *, preview: bool) -> str:
         sections = report.get("sections") or {}
         metrics = report.get("metrics") or {}
+        by_status = metrics.get("byStatus") or {}
         prefix = "【预览】" if preview else ""
-        return "\n".join(
-            [
-                f"### {prefix}{report.get('title') or '产品与项目管理周报'}",
-                "",
-                f"周期：{(report.get('window') or {}).get('label') or report.get('periodKey')}",
-                f"版本：v{report.get('version')}",
-                "",
-                str(sections.get("executiveSummary") or "暂无总结"),
-                "",
-                f"风险 {int(metrics.get('riskCount') or 0)} 项｜逾期 {int(metrics.get('overdueCount') or 0)} 项｜高优先级 {int(metrics.get('highPriorityCount') or 0)} 项",
-                *( ["", "请审核人回复“确认发送”或“需要修改：具体意见”。"] if preview else [] ),
-            ]
-        )
+
+        def compact(value: Any, limit: int = 160) -> str:
+            text = re.sub(r"\s+", " ", str(value or "")).strip()
+            return text if len(text) <= limit else f"{text[: limit - 1].rstrip()}…"
+
+        summary = str(sections.get("executiveSummary") or "暂无总结").strip()
+        summary_sentences = [
+            compact(item)
+            for line in summary.splitlines()
+            for item in re.findall(r"[^。！？!?]+[。！？!?]*", line)
+            if item.strip()
+        ][:3] or ["暂无总结"]
+        risk_text = str(sections.get("risks") or "").strip()
+        risk_items = [
+            compact(re.sub(r"^\d{1,2}[.、]\s*", "", item.lstrip("-•* ")), 140)
+            for item in re.split(r"\n+|(?<=。)\s*(?=\d{1,2}[.、]\s*)", risk_text)
+            if item.strip()
+        ][:2]
+
+        lines = [
+            f"### {prefix}{report.get('title') or '产品与项目管理周报'}",
+            "",
+            f"**周期**：{(report.get('window') or {}).get('label') or report.get('periodKey')}",
+            f"**版本**：v{report.get('version')}",
+            "",
+            "---",
+            "",
+            "**核心数据**",
+            "",
+            f"- 纳入事项：**{int(metrics.get('itemCount') or 0)}** 项 ｜ 涉及负责人：**{int(metrics.get('managerCount') or 0)}** 人",
+            f"- 已完成：**{int(by_status.get('已完成') or 0)}** 项 ｜ 进行中：**{int(by_status.get('进行中') or 0)}** 项",
+            f"- 风险：**{int(metrics.get('riskCount') or 0)}** 项 ｜ 逾期：**{int(metrics.get('overdueCount') or 0)}** 项 ｜ 高优先级：**{int(metrics.get('highPriorityCount') or 0)}** 项",
+            "",
+            "**管理摘要**",
+            "",
+            *(f"> {item}" for item in summary_sentences),
+            "",
+            "**风险聚焦**",
+            "",
+            *(f"{index}. {item}" for index, item in enumerate(risk_items, start=1)),
+            *( ["- 暂无需要单独聚焦的风险。"] if not risk_items else [] ),
+        ]
+        if preview:
+            lines.extend(
+                [
+                    "",
+                    "---",
+                    "",
+                    "**审核操作**",
+                    "",
+                    "- 通过：回复 `确认发送`",
+                    "- 退回：回复 `需要修改：具体意见`",
+                ]
+            )
+        return "\n".join(lines)
 
     def _claim_send(self, idempotency_key: str) -> str:
         """Atomically reserve a send key before making the external API call."""

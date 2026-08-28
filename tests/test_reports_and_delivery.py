@@ -59,6 +59,38 @@ class RetryArchive:
 
 
 class ReportsAndDeliveryTests(unittest.TestCase):
+    def test_preview_markdown_uses_structured_sections(self) -> None:
+        message = DeliveryService._markdown(
+            {
+                "title": "产品与项目管理周报",
+                "version": 3,
+                "window": {"label": "2026-08-24 至 2026-08-28 18:00"},
+                "sections": {
+                    "executiveSummary": "本周完成重点交付。当前存在延期风险。下周继续推进。",
+                    "risks": "1. 第一项风险需要协调。\n2. 第二项风险需要跟进。\n3. 第三项不应出现在卡片中。",
+                },
+                "metrics": {
+                    "itemCount": 12,
+                    "managerCount": 4,
+                    "riskCount": 3,
+                    "overdueCount": 2,
+                    "highPriorityCount": 1,
+                    "byStatus": {"已完成": 7, "进行中": 3},
+                },
+            },
+            preview=True,
+        )
+        self.assertIn("**核心数据**", message)
+        self.assertIn("纳入事项：**12**", message)
+        self.assertIn("已完成：**7**", message)
+        self.assertIn("**管理摘要**", message)
+        self.assertIn("> 本周完成重点交付。", message)
+        self.assertIn("**风险聚焦**", message)
+        self.assertIn("1. 第一项风险需要协调。", message)
+        self.assertNotIn("第三项不应出现在卡片中", message)
+        self.assertIn("**审核操作**", message)
+        self.assertIn("`确认发送`", message)
+
     def setUp(self) -> None:
         self.temp_dir = tempfile.TemporaryDirectory()
         self.db = Database(Path(self.temp_dir.name) / "test.db")

@@ -21,7 +21,7 @@
     delivery: {eyebrow: "DELIVERY CONTROL", title: "推送设置", subtitle: "测试目标、正式目标与人工确认"},
   };
   const STATUS_LABELS = {
-    draft_generated: "待编辑", awaiting_approval: "待确认", approved: "已确认",
+    draft_generated: "待编辑", rendered: "已生成图片", awaiting_approval: "待确认", approved: "已确认",
     formal_sent: "已正式发送", need_changes: "待修改", retryable_error: "可重试",
     recalled: "已撤回", cancelled: "已取消",
   };
@@ -36,8 +36,15 @@
   let latestCoverage = null;
   let teambitionData = null;
   let activeReportId = null;
+  let reportOriginalSections = {};
+  let reportIsDirty = false;
   let reportFilter = "current";
   let toastTimer = null;
+  let accessConnected = false;
+  let ssoConfigured = false;
+  let sessionAuthenticated = false;
+  let currentIdentityName = "";
+  let authRedirecting = false;
 
   tokenInput.value = localStorage.getItem("weeklyReportAdminToken") || "";
 
@@ -57,6 +64,44 @@
     toast.className = `toast show${type === "error" ? " error" : ""}`;
     clearTimeout(toastTimer);
     toastTimer = setTimeout(() => { toast.className = "toast"; }, 3200);
+  };
+
+  const beginSsoLogin = () => {
+    if (!ssoConfigured || authRedirecting) return;
+    authRedirecting = true;
+    sessionStorage.removeItem("weeklyReportManualLogout");
+    const loginUrl = new URL("api/auth/dingtalk/login", appBaseUrl);
+    loginUrl.searchParams.set("next", window.location.hash || "#/overview");
+    window.location.assign(loginUrl.toString());
+  };
+
+  const setAccessDisconnected = (message = "请先连接管理端。", {clearToken = false, open = true} = {}) => {
+    accessConnected = false;
+    if (clearToken) {
+      tokenInput.value = "";
+      localStorage.removeItem("weeklyReportAdminToken");
+    }
+    $(".auth-menu").classList.add("invalid");
+    $("#authSummary").textContent = "需要登录";
+    $("#authIdentity").textContent = message;
+    $("#loginWithDingTalk").hidden = !ssoConfigured;
+    $("#logoutSession").hidden = true;
+    if (open) $(".auth-menu").open = true;
+    $(".sidebar-footer").classList.remove("ready");
+    $("#sidebarReadyText").textContent = "管理端未连接";
+    $("#sidebarReadyDetail").textContent = message;
+    $("#reportFilterSummary").textContent = "连接管理端后读取周报";
+    $("#reports").innerHTML = `<div class="empty-state"><strong>需要登录管理端</strong><p>${escapeHtml(message)}</p><div class="actions"><button data-start-login type="button">${ssoConfigured ? "使用钉钉登录" : "连接管理端"}</button></div></div>`;
+    $("#openLatestReport").disabled = true;
+  };
+
+  const setAccessConnected = (identityName = currentIdentityName) => {
+    accessConnected = true;
+    $(".auth-menu").classList.remove("invalid");
+    $("#authSummary").textContent = identityName ? `${identityName} · 已登录` : "运维连接";
+    $("#authIdentity").textContent = identityName ? `${identityName}，钉钉身份已验证` : "已使用运维令牌连接";
+    $("#loginWithDingTalk").hidden = true;
+    $("#logoutSession").hidden = !sessionAuthenticated;
   };
 
   const log = (label, value = "") => {
@@ -79,12 +124,19 @@
   const api = async (path, options = {}) => {
     const headers = {"Content-Type": "application/json", ...(options.headers || {})};
     if (tokenInput.value.trim()) headers.Authorization = `Bearer ${tokenInput.value.trim()}`;
-    const response = await fetch(resolveUrl(path), {...options, headers});
+    const response = await fetch(resolveUrl(path), {...options, headers, credentials: "same-origin"});
     let body;
     try { body = await response.json(); } catch (_) { body = {detail: await response.text()}; }
     if (!response.ok) {
       const detail = typeof body.detail === "string" ? body.detail : JSON.stringify(body.detail || body);
-      throw new Error(detail || `HTTP ${response.status}`);
+      if (response.status === 401) {
+        const usingToken = Boolean(tokenInput.value.trim());
+        setAccessDisconnected(usingToken ? "运维令牌与服务器不匹配。" : "钉钉登录已过期，请重新登录。", {clearToken: usingToken, open: false});
+        if (ssoConfigured) beginSsoLogin();
+      }
+      const error = new Error(response.status === 401 ? "管理登录已失效，请重新连接" : (detail || `HTTP ${response.status}`));
+      error.status = response.status;
+      throw error;
     }
     return body;
   };
@@ -99,7 +151,7 @@
     $("#pageSubtitle").textContent = meta.subtitle;
     document.title = `${meta.title} · 产品与项目经理周报助手`;
     closeSidebar();
-    if (next === "teambition" && tokenInput.value.trim() && !teambitionData) {
+    if (next === "teambition" && (accessConnected || tokenInput.value.trim()) && !teambitionData) {
       loadTeambitionDashboard().catch((error) => showToast(`TB 看板读取失败：${error.message}`, "error"));
     }
   };
@@ -127,6 +179,7 @@
     const directoryCache = c.directoryCache || {};
     $("#readiness").innerHTML = [
       checkCard("钉钉应用", c.dingtalkApp ? "ok" : "bad"),
+      checkCard("管理端登录", c.adminSso ? "ok" : "neutral", c.adminSso ? "钉钉 OAuth" : "运维令牌兜底"),
       checkCard("AI 多维表", c.sourceData?.ready ? "ok" : "bad", c.sourceData?.reason || "最近同步成功"),
       checkCard("人员目录", c.biCenter ? "ok" : "bad", `${c.directoryCache?.count || 0} 人`),
       checkCard("TB 任务", c.teambition?.ready ? "ok" : (c.teambition?.required ? "bad" : "neutral"), c.teambition?.configured ? `${c.teambition?.taskCount || 0} 条` : "未配置密钥"),
@@ -190,6 +243,7 @@
   };
 
   const reportActionButton = (id, action, label, css = "") => `<button class="${css}" data-report-id="${id}" data-report-action="${action}" type="button">${label}</button>`;
+  const reportMoreMenu = (id, actions) => actions.length ? `<details class="report-more"><summary>更多</summary><div class="report-more-menu">${actions.map(([action, label, css = "secondary"]) => reportActionButton(id, action, label, css)).join("")}</div></details>` : "";
   const visibleReports = () => {
     const kind = $("#reportKindFilter").value;
     const query = $("#reportSearch").value.trim().toLowerCase();
@@ -212,18 +266,25 @@
 
   const renderReports = () => {
     const items = visibleReports();
+    const latest = reportItems[0];
+    $("#openLatestReport").disabled = !latest;
+    $("#openLatestReport").textContent = latest ? `外部打开 #${latest.id} ↗` : "外部打开最新周报 ↗";
     const modeLabel = {current: "当前周期最新版本", formal: "已正式发送", history: "全部历史记录"}[reportFilter];
     $("#reportFilterSummary").textContent = `${modeLabel} · 共 ${items.length} 条`;
     $("#reports").innerHTML = items.length ? items.map((item) => {
       const metrics = item.metrics || {};
+      const editable = !["formal_sent", "recalled", "cancelled"].includes(item.workflowState);
       const actions = [
-        reportActionButton(item.id, "detail", "查看与编辑", "secondary"),
-        reportActionButton(item.id, "render", "生成图片", "secondary"),
-        reportActionButton(item.id, "preview", "发送预览"),
-        reportActionButton(item.id, "approve", "审核通过", "secondary"),
-        reportActionButton(item.id, "formal", "正式发送"),
-        reportActionButton(item.id, "archive", "归档", "secondary"),
-        reportActionButton(item.id, "recall", "撤回", "danger"),
+        editable ? reportActionButton(item.id, "edit", "编辑正文") : "",
+        reportActionButton(item.id, "browse", "外部打开 ↗", "secondary"),
+        !item.previewedAt && ["draft_generated", "rendered", "retryable_error"].includes(item.workflowState) ? reportActionButton(item.id, "preview", "发送预览") : "",
+        item.workflowState === "awaiting_approval" ? reportActionButton(item.id, "approve", "审核通过") : "",
+        item.workflowState === "approved" ? reportActionButton(item.id, "formal", "正式发送") : "",
+        item.workflowState === "formal_sent" ? reportActionButton(item.id, "recall", "撤回", "danger") : "",
+        reportMoreMenu(item.id, [
+          ...(editable ? [["render", "重新生成图片", "secondary"]] : []),
+          ...(item.workflowState === "formal_sent" ? [["archive", "归档", "secondary"]] : []),
+        ]),
       ].join("");
       return `<article class="report"><div><div class="report-title-row"><h3>#${item.id} ${escapeHtml(item.title)}</h3><span class="badge ${statusBadgeClass(item.workflowState)}">${escapeHtml(statusLabel(item.workflowState))}</span></div><p class="report-meta"><span>${escapeHtml(item.window?.label || item.periodKey)}</span><span>${escapeHtml(KIND_LABELS[item.reportKind] || item.reportKind)}</span><span>版本 v${item.version}</span><span>AI ${escapeHtml(item.aiStatus || "-")}</span><span>归档 ${escapeHtml(item.archive?.status || "未执行")}</span></p><p>事项 ${metrics.itemCount || 0} · 风险 ${metrics.riskCount || 0} · 逾期 ${metrics.overdueCount || 0} · 缺覆盖 ${metrics.coverage?.missingCount || 0}</p></div><div class="actions">${actions}</div></article>`;
     }).join("") : '<div class="empty-state"><strong>当前筛选下没有周报</strong><p>可以切换范围，或同步事实后生成一个新版本。</p></div>';
@@ -293,12 +354,47 @@
   const openReport = async (id) => {
     const report = await api(`/api/reports/${id}`);
     activeReportId = Number(id);
+    reportOriginalSections = Object.fromEntries(SECTION_KEYS.map((key) => [key, String(report.sections?.[key] || "").trim()]));
+    reportIsDirty = false;
+    $("#reportSourceDetails").open = false;
     $("#reportDialogTitle").textContent = `#${id} ${report.title}`;
     $("#reportDialogMeta").textContent = `${report.window?.label || report.periodKey} · ${KIND_LABELS[report.reportKind] || report.reportKind} · v${report.version} · ${statusLabel(report.workflowState)} · 归档 ${report.archive?.status || "未执行"}${report.archive?.error ? `（${report.archive.error}）` : ""}`;
     SECTION_KEYS.forEach((key) => setValue(`#section-${key}`, report.sections?.[key] || ""));
+    $("#saveSections").disabled = true;
+    $("#reportDirtyHint").textContent = "修改后保存会清除旧图片和审核状态。";
+    $("#reportDirtyHint").className = "";
     $("#reportSources").innerHTML = (report.sources || []).length ? report.sources.map((item) => `<article><strong>${escapeHtml(item.title || "未命名事项")}</strong><span>${escapeHtml(item.category || "")} · ${escapeHtml(item.status || "未标记")}</span><p>${escapeHtml(item.progressText || item.planText || item.riskText || "暂无详情")}</p></article>`).join("") : '<p class="muted">本版周报未纳入事实记录。</p>';
     $("#reportDialog").showModal();
     return report;
+  };
+
+  const currentReportSections = () => Object.fromEntries(SECTION_KEYS.map((key) => [key, $(`#section-${key}`).value.trim()]));
+  const updateReportDirtyState = () => {
+    const current = currentReportSections();
+    reportIsDirty = SECTION_KEYS.some((key) => current[key] !== (reportOriginalSections[key] || ""));
+    $("#saveSections").disabled = !reportIsDirty;
+    $("#reportDirtyHint").textContent = reportIsDirty ? "有未保存修改；保存后需重新生成图片并再次预览。" : "修改后保存会清除旧图片和审核状态。";
+    $("#reportDirtyHint").className = reportIsDirty ? "dirty" : "";
+  };
+
+  const closeReportEditor = () => {
+    if (reportIsDirty && !window.confirm("当前修改尚未保存，确定放弃吗？")) return false;
+    reportIsDirty = false;
+    $("#reportDialog").close();
+    return true;
+  };
+
+  const openPublicReport = async (id) => {
+    const data = await api(`/api/reports/${id}/public-urls`);
+    if (!data.reportUrl) throw new Error("公开访问地址尚未配置");
+    const link = document.createElement("a");
+    link.href = data.reportUrl;
+    link.target = "_blank";
+    link.rel = "noopener noreferrer";
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    return {message: "已在新窗口打开只读周报"};
   };
 
   const renderProjectRows = () => {
@@ -516,6 +612,12 @@
   const modelPayload = () => ({provider: $("#modelProvider").value, apiBase: $("#modelApiBase").value.trim(), modelName: $("#modelName").value.trim(), apiKey: $("#modelApiKey").value.trim()});
 
   const run = async (label, callback, {refresh = true} = {}) => {
+    if (!accessConnected && !tokenInput.value.trim()) {
+      if (ssoConfigured) beginSsoLogin();
+      else setAccessDisconnected("请先使用运维令牌连接管理端。");
+      showToast("请先登录管理端。", "error");
+      return null;
+    }
     busy.textContent = `${label}处理中…`;
     try {
       const data = await callback();
@@ -533,9 +635,24 @@
   };
 
   const refreshAll = async () => {
-    if (!tokenInput.value.trim()) return showToast("请先保存管理令牌。", "error");
+    if (!accessConnected && !tokenInput.value.trim()) {
+      setAccessDisconnected(ssoConfigured ? "请先使用钉钉登录。" : "请先使用运维令牌连接管理端。", {open: false});
+      if (ssoConfigured) beginSsoLogin();
+      return false;
+    }
     busy.textContent = "读取中…";
-    const tasks = [loadReadiness(), loadReports(), loadConfig(), loadModelConfig(), loadCoverage(), loadEvents(), loadTeambitionDashboard()];
+    try {
+      await loadReadiness();
+      setAccessConnected();
+    } catch (error) {
+      if (error.status !== 401) {
+        log("连接管理端失败", error.message);
+        showToast(`连接失败：${error.message}`, "error");
+      }
+      busy.textContent = "";
+      return false;
+    }
+    const tasks = [loadReports(), loadConfig(), loadModelConfig(), loadCoverage(), loadEvents(), loadTeambitionDashboard()];
     const results = await Promise.allSettled(tasks);
     const errors = [...new Set(results.filter((item) => item.status === "rejected").map((item) => item.reason?.message || "未知错误"))];
     if (errors.length) {
@@ -545,14 +662,33 @@
       showToast("数据已刷新");
     }
     busy.textContent = "";
+    return accessConnected;
   };
 
-  $("#saveToken").addEventListener("click", () => {
-    localStorage.setItem("weeklyReportAdminToken", tokenInput.value.trim());
+  $("#saveToken").addEventListener("click", async () => {
+    const candidate = tokenInput.value.trim();
+    if (!candidate) return setAccessDisconnected("请输入管理令牌后再连接。");
+    localStorage.removeItem("weeklyReportAdminToken");
+    const connected = await refreshAll();
+    if (!connected) return;
+    localStorage.setItem("weeklyReportAdminToken", candidate);
     $(".auth-menu").removeAttribute("open");
-    refreshAll();
+    showToast("管理端连接成功");
+  });
+  $("#loginWithDingTalk").addEventListener("click", beginSsoLogin);
+  $("#logoutSession").addEventListener("click", async () => {
+    await fetch(resolveUrl("/api/auth/logout"), {method: "POST", credentials: "same-origin"});
+    sessionStorage.setItem("weeklyReportManualLogout", "1");
+    sessionAuthenticated = false;
+    currentIdentityName = "";
+    setAccessDisconnected("已退出当前钉钉账号。", {open: true});
   });
   $("#refreshAll").addEventListener("click", refreshAll);
+  $("#openLatestReport").addEventListener("click", () => {
+    const latest = reportItems[0];
+    if (!latest) return showToast("暂无可打开的周报。", "error");
+    run("外部打开周报", () => openPublicReport(latest.id), {refresh: false});
+  });
   $("#refreshOverview").addEventListener("click", () => run("检查链路", loadReadiness, {refresh: false}));
   $("#refreshTeambition").addEventListener("click", () => run("刷新 TB 看板", loadTeambitionDashboard, {refresh: false}));
   $("#applyTeambitionFilters").addEventListener("click", () => run("筛选 TB 看板", loadTeambitionDashboard, {refresh: false}));
@@ -643,16 +779,38 @@
     run("恢复模型配置", async () => { const data = await api("/api/model-config", {method: "DELETE"}); applyModelConfig(data); await loadReadiness(); return data; }, {refresh: false});
   });
 
-  $("#closeReportDialog").addEventListener("click", () => $("#reportDialog").close());
+  SECTION_KEYS.forEach((key) => $(`#section-${key}`).addEventListener("input", updateReportDirtyState));
+  $("#closeReportDialog").addEventListener("click", closeReportEditor);
+  $("#cancelSections").addEventListener("click", closeReportEditor);
+  $("#reportDialog").addEventListener("cancel", (event) => {
+    if (!reportIsDirty) return;
+    event.preventDefault();
+    closeReportEditor();
+  });
   $("#saveSections").addEventListener("click", () => run("保存周报正文", async () => {
     if (!activeReportId) throw new Error("未选择周报");
-    const sections = Object.fromEntries(SECTION_KEYS.map((key) => [key, $(`#section-${key}`).value.trim()]));
+    const sections = currentReportSections();
     const data = await api(`/api/reports/${activeReportId}/sections`, {method: "PUT", body: JSON.stringify({sections})});
+    reportIsDirty = false;
     $("#reportDialog").close();
     return data;
   }));
 
   document.addEventListener("click", (event) => {
+    if (event.target.closest("[data-start-login]")) {
+      if (ssoConfigured) beginSsoLogin();
+      else {
+        $(".auth-menu").open = true;
+        $(".maintenance-auth").open = true;
+        tokenInput.focus();
+      }
+      return;
+    }
+    if (event.target.closest("[data-open-auth]")) {
+      $(".auth-menu").open = true;
+      tokenInput.focus();
+      return;
+    }
     const action = event.target.closest("[data-action]")?.dataset.action;
     if (action === "sync-source") run("同步 AI 表", () => api("/api/sync/source", {method: "POST"}));
     if (action === "sync-teambition") run("同步 TB", async () => {
@@ -697,7 +855,8 @@
     if (!reportButton) return;
     const id = reportButton.dataset.reportId;
     const reportAction = reportButton.dataset.reportAction;
-    if (reportAction === "detail") { run("读取周报详情", () => openReport(id), {refresh: false}); return; }
+    if (reportAction === "browse") { run("浏览周报", () => openPublicReport(id), {refresh: false}); return; }
+    if (reportAction === "edit") { run("编辑周报", () => openReport(id), {refresh: false}); return; }
     const routes = {render: ["生成图片", `/api/reports/${id}/render`], preview: ["发送预览", `/api/reports/${id}/preview`], approve: ["审核通过", `/api/reports/${id}/approve`], formal: ["正式发送", `/api/reports/${id}/formal-send`], archive: ["归档", `/api/reports/${id}/archive`], recall: ["撤回消息", `/api/reports/${id}/recall`]};
     const [label, path] = routes[reportAction] || [];
     if (!path) return;
@@ -711,5 +870,31 @@
   }
   setRoute(routeFromHash());
   if (!window.location.hash) window.history.replaceState(null, "", "#/overview");
-  if (tokenInput.value) refreshAll();
+  const initializeAccess = async () => {
+    try {
+      const response = await fetch(resolveUrl("/api/auth/session"), {credentials: "same-origin"});
+      const status = await response.json();
+      ssoConfigured = Boolean(status.ssoConfigured);
+      sessionAuthenticated = Boolean(status.authenticated);
+      currentIdentityName = String(status.user?.name || "");
+      if (sessionAuthenticated) {
+        sessionStorage.removeItem("weeklyReportManualLogout");
+        setAccessConnected(currentIdentityName);
+        await refreshAll();
+        return;
+      }
+      if (ssoConfigured && sessionStorage.getItem("weeklyReportManualLogout") !== "1") {
+        beginSsoLogin();
+        return;
+      }
+      if (tokenInput.value) {
+        await refreshAll();
+        return;
+      }
+      setAccessDisconnected(ssoConfigured ? "请使用钉钉登录。" : "钉钉登录尚未配置，可使用运维令牌兜底。", {open: false});
+    } catch (error) {
+      setAccessDisconnected(`登录状态检查失败：${error.message}`, {open: false});
+    }
+  };
+  initializeAccess();
 })();
