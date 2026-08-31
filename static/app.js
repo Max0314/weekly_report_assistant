@@ -39,8 +39,11 @@
   let personalContext = null;
   let activePersonalUserId = "";
   let personalMemberSearch = "";
+  let activePersonalReport = null;
+  let personalOriginalEdit = "";
+  let personalIsDirty = false;
   let activeReportId = null;
-  let reportOriginalSections = {};
+  let reportOriginalEdit = "";
   let reportIsDirty = false;
   let reportFilter = "current";
   let toastTimer = null;
@@ -170,6 +173,7 @@
   const routeQuery = () => new URLSearchParams(String(window.location.hash || "").split("?", 2)[1] || "");
   const personalReportIdFromHash = () => toInt(routeQuery().get("reportId"), 0);
   const personalUserIdFromHash = () => String(routeQuery().get("userId") || "").trim();
+  const editReportIdFromHash = () => toInt(routeQuery().get("editReportId"), 0);
   const personalReportHref = (reportId, userId = "") => {
     const url = new URL(window.location.href);
     const params = new URLSearchParams({reportId: String(reportId || "")});
@@ -359,7 +363,7 @@
     const person = data.person || {};
     const metrics = data.metrics || {};
     const externalHref = personalReportHref(data.reportId, person.userId);
-    $("#personalHero").innerHTML = `<div><span>PERSONAL WEEKLY REPORT</span><h2>${escapeHtml(person.name || "个人周报")}</h2><p>${escapeHtml(data.window?.label || data.periodKey || "")} · 团队周报 v${data.version || 0}</p></div><div class="personal-hero-actions"><div class="personal-hero-tag">${escapeHtml(statusLabel(data.workflowState))}</div><a class="personal-external-link" href="${escapeHtml(externalHref)}" target="_blank" rel="noopener noreferrer">外部打开 ↗</a></div>`;
+    $("#personalHero").innerHTML = `<div><span>PERSONAL WEEKLY REPORT</span><h2>${escapeHtml(person.name || "个人周报")}</h2><p>${escapeHtml(data.window?.label || data.periodKey || "")} · 团队周报 v${data.version || 0}${data.edit?.edited ? ` · 已编辑 ${escapeHtml(String(data.edit.updatedAt || "").replace("T", " ").slice(0, 16))}` : ""}</p></div><div class="personal-hero-actions"><div class="personal-hero-tag">${escapeHtml(statusLabel(data.workflowState))}</div>${data.canEdit ? '<button class="personal-edit-button" data-personal-edit type="button">✎ 编辑个人周报</button>' : ""}<a class="personal-external-link" href="${escapeHtml(externalHref)}" target="_blank" rel="noopener noreferrer">外部打开 ↗</a></div>`;
     const cards = [
       ["关联事项", metrics.itemCount || 0, `涉及 ${Object.keys(metrics.byCategory || {}).length} 个分类`],
       ["已完成", metrics.completedCount || 0, `进行中/待处理 ${metrics.inProgressCount || 0}`],
@@ -398,7 +402,8 @@
     $("#personalCategories").innerHTML = (data.categorySections || []).length ? data.categorySections.map((section) => {
       const categoryItems = items.filter((item) => String(item.categoryKey || item.tableId) === String(section.key));
       const subtypeChips = Object.entries(section.bySubcategory || {}).map(([name, count]) => `<span>${escapeHtml(name)} ${count}</span>`).join("");
-      return `<section class="panel personal-category"><div class="personal-category-head"><div><p class="eyebrow">${String(section.order || "").padStart(2, "0")}</p><h2>${escapeHtml(section.label || "未分类")}</h2></div><div class="personal-category-count"><strong>${section.itemCount || 0}</strong><span>项工作</span></div></div>${subtypeChips ? `<div class="personal-subtypes">${subtypeChips}</div>` : ""}<div class="personal-item-list">${categoryItems.map((item) => {
+      const categorySummary = section.digest ? `<div class="personal-category-summary">${sectionLines(section.digest).map((line) => `<p>${escapeHtml(line)}</p>`).join("")}</div>` : "";
+      return `<section class="panel personal-category"><div class="personal-category-head"><div><p class="eyebrow">${String(section.order || "").padStart(2, "0")}</p><h2>${escapeHtml(section.label || "未分类")}</h2></div><div class="personal-category-count"><strong>${section.itemCount || 0}</strong><span>项工作</span></div></div>${categorySummary}${subtypeChips ? `<div class="personal-subtypes">${subtypeChips}</div>` : ""}<div class="personal-item-list">${categoryItems.map((item) => {
         const tbProject = item.teambitionProject || null;
         const tags = [...(item.roles || []), item.subcategory, item.status || "未标记", item.priority ? `${item.priority}优先级` : "", tbProject?.statusName ? `TB · ${tbProject.statusName}` : ""].filter(Boolean);
         const dates = [item.eventAt ? `业务日期 ${String(item.eventAt).split("T")[0]}` : "", item.dueAt ? `截止 ${String(item.dueAt).split("T")[0]}` : ""].filter(Boolean).join(" · ");
@@ -419,11 +424,65 @@
     const params = new URLSearchParams();
     if (userId) params.set("user_id", userId);
     const data = await api(`/api/personal-reports/${reportId}?${params.toString()}`);
+    activePersonalReport = data;
     activePersonalUserId = data.person?.userId || userId || currentIdentityUserId;
     updatePersonalReportRoute(data.reportId || reportId, activePersonalUserId);
     renderPersonalMembers();
     renderPersonalReport(data);
     return data;
+  };
+
+  const personalItemKey = (item) => String(item.recordId || item.id || "").trim();
+  const currentPersonalEditPayload = () => {
+    const categoryDigests = Object.fromEntries($$("[data-personal-category-key]", $("#personalEditCategories")).map((row) => [row.dataset.personalCategoryKey, $("textarea", row).value.trim()]));
+    const itemOverrides = Object.fromEntries($$("[data-personal-item-key]", $("#personalEditItems")).map((row) => {
+      const values = {};
+      $$('[data-personal-item-field]', row).forEach((input) => { values[input.dataset.personalItemField] = input.value.trim(); });
+      return [row.dataset.personalItemKey, values];
+    }));
+    return {
+      userId: activePersonalReport?.person?.userId || activePersonalUserId,
+      summary: $("#personalEditSummary").value.trim(),
+      categoryDigests,
+      itemOverrides,
+    };
+  };
+
+  const updatePersonalDirtyState = () => {
+    personalIsDirty = JSON.stringify(currentPersonalEditPayload()) !== personalOriginalEdit;
+    $("#savePersonalEdit").disabled = !personalIsDirty;
+    $("#personalDirtyHint").textContent = personalIsDirty ? "有未保存修改；保存后需要重新预览和审核团队周报。" : "保存后需要重新预览和审核团队周报。";
+    $("#personalDirtyHint").className = personalIsDirty ? "dirty" : "";
+  };
+
+  const openPersonalEditor = () => {
+    const data = activePersonalReport;
+    if (!data?.canEdit) throw new Error("当前个人周报不可编辑");
+    const person = data.person || {};
+    $("#personalEditTitle").textContent = `编辑${person.name || "成员"}的个人周报`;
+    $("#personalEditMeta").textContent = `${data.window?.label || data.periodKey || ""} · 团队周报 v${data.version || 0}`;
+    $("#personalEditSummary").value = data.summary || "";
+    $("#personalEditCategories").innerHTML = (data.categorySections || []).map((section) => `<label data-personal-category-key="${escapeHtml(section.key || "")}"><span><strong>${escapeHtml(section.label || "未分类")}</strong><small>${section.itemCount || 0} 项</small></span><textarea maxlength="12000">${escapeHtml(section.digest || section.content || "")}</textarea></label>`).join("") || '<p class="muted">当前没有可编辑分类。</p>';
+    $("#personalEditItems").innerHTML = (data.items || []).map((item, index) => {
+      const itemKey = personalItemKey(item);
+      const tb = item.teambitionProject || null;
+      const tbMeta = tb ? [tb.statusName, tb.statusDegreeLabel, tb.progressPercent != null ? `进度 ${tb.progressPercent}%` : ""].filter(Boolean).join(" · ") : "";
+      return `<details class="personal-item-editor" data-personal-item-key="${escapeHtml(itemKey)}" ${index < 2 ? "open" : ""}><summary><span><strong>${escapeHtml(item.title || "未命名事项")}</strong><small>${escapeHtml(item.category || "未分类")} · ${escapeHtml(item.status || "未标记")}</small></span><em>展开编辑</em></summary><div class="personal-item-editor-grid"><label class="full-span">事项标题<input data-personal-item-field="title" maxlength="12000" value="${escapeHtml(item.title || "")}"></label><label>状态<input data-personal-item-field="status" maxlength="12000" value="${escapeHtml(item.status || "")}"></label><label>优先级<input data-personal-item-field="priority" maxlength="12000" value="${escapeHtml(item.priority || "")}"></label><label class="full-span">本周进展<textarea data-personal-item-field="progressText" maxlength="12000">${escapeHtml(item.progressText || "")}</textarea></label><label class="full-span">下周计划<textarea data-personal-item-field="planText" maxlength="12000">${escapeHtml(item.planText || "")}</textarea></label><label class="full-span">风险与问题<textarea data-personal-item-field="riskText" maxlength="12000">${escapeHtml(item.riskText || "")}</textarea></label>${tb ? `<div class="personal-tb-readonly full-span"><strong>TB项目状态（只读）</strong><span>${escapeHtml(tbMeta || "已关联TB重点项目")}</span><p>${escapeHtml(tb.statusSummary || tb.statusContent || "暂无状态正文")}</p></div>` : ""}</div></details>`;
+    }).join("") || '<p class="muted">当前没有可编辑事项。</p>';
+    personalIsDirty = false;
+    personalOriginalEdit = JSON.stringify(currentPersonalEditPayload());
+    $("#savePersonalEdit").disabled = true;
+    $("#personalDirtyHint").textContent = "保存后需要重新预览和审核团队周报。";
+    $("#personalDirtyHint").className = "";
+    $("#personalEditDialog").showModal();
+    return data;
+  };
+
+  const closePersonalEditor = () => {
+    if (personalIsDirty && !window.confirm("当前个人周报修改尚未保存，确定放弃吗？")) return false;
+    personalIsDirty = false;
+    $("#personalEditDialog").close();
+    return true;
   };
 
   const loadPersonalContext = async (reportId = Number($("#personalReportPeriod")?.value || 0)) => {
@@ -500,26 +559,35 @@
   const openReport = async (id) => {
     const report = await api(`/api/reports/${id}`);
     activeReportId = Number(id);
-    reportOriginalSections = Object.fromEntries(SECTION_KEYS.map((key) => [key, String(report.sections?.[key] || "").trim()]));
     reportIsDirty = false;
     $("#reportSourceDetails").open = false;
     $("#reportDialogTitle").textContent = `#${id} ${report.title}`;
     $("#reportDialogMeta").textContent = `${report.window?.label || report.periodKey} · ${KIND_LABELS[report.reportKind] || report.reportKind} · v${report.version} · ${statusLabel(report.workflowState)} · 归档 ${report.archive?.status || "未执行"}${report.archive?.error ? `（${report.archive.error}）` : ""}`;
+    $("#reportEditTitle").value = report.title || "";
     SECTION_KEYS.forEach((key) => setValue(`#section-${key}`, report.sections?.[key] || ""));
     $("#saveSections").disabled = true;
-    $("#reportDirtyHint").textContent = "修改后保存会清除旧图片和审核状态。";
+    $("#reportDirtyHint").textContent = "修改后保存会清除旧图片、预览和审核状态。";
     $("#reportDirtyHint").className = "";
     const categorySections = report.sections?.categorySections || [];
-    $("#reportCategorySections").innerHTML = categorySections.length ? categorySections.map((section) => `<article><div><strong>${escapeHtml(section.label || "未分类")}</strong><span>${section.itemCount || 0} 项 · 风险 ${section.riskCount || 0} · 逾期 ${section.overdueCount || 0}</span></div><ol>${sectionLines(section.digest || section.content).map((line) => `<li>${escapeHtml(line)}</li>`).join("")}</ol></article>`).join("") : '<p class="muted">本版没有结构化分类，事实清单仍可正常查看。</p>';
+    $("#reportCategorySections").innerHTML = categorySections.length ? categorySections.map((section) => `<label data-report-category-key="${escapeHtml(section.key || "")}"><span><strong>${escapeHtml(section.label || "未分类")}</strong><small>${section.itemCount || 0} 项 · 风险 ${section.riskCount || 0} · 逾期 ${section.overdueCount || 0}</small></span><textarea maxlength="12000">${escapeHtml(section.digest || section.content || "")}</textarea></label>`).join("") : '<p class="muted">本版没有结构化分类，事实清单仍可正常查看。</p>';
     $("#reportSources").innerHTML = (report.sources || []).length ? report.sources.map((item) => `<article><strong>${escapeHtml(item.title || "未命名事项")}</strong><span>${escapeHtml(item.category || "")} · ${escapeHtml(item.status || "未标记")}</span><p>${escapeHtml(item.progressText || item.planText || item.riskText || "暂无详情")}</p></article>`).join("") : '<p class="muted">本版周报未纳入事实记录。</p>';
+    reportOriginalEdit = JSON.stringify(currentReportEditPayload());
     $("#reportDialog").showModal();
     return report;
   };
 
-  const currentReportSections = () => Object.fromEntries(SECTION_KEYS.map((key) => [key, $(`#section-${key}`).value.trim()]));
+  const currentReportEditPayload = () => ({
+    title: $("#reportEditTitle").value.trim(),
+    sections: {
+      ...Object.fromEntries(SECTION_KEYS.map((key) => [key, $(`#section-${key}`).value.trim()])),
+      categorySections: $$("[data-report-category-key]", $("#reportCategorySections")).map((row) => ({
+        key: row.dataset.reportCategoryKey,
+        digest: $("textarea", row).value.trim(),
+      })),
+    },
+  });
   const updateReportDirtyState = () => {
-    const current = currentReportSections();
-    reportIsDirty = SECTION_KEYS.some((key) => current[key] !== (reportOriginalSections[key] || ""));
+    reportIsDirty = JSON.stringify(currentReportEditPayload()) !== reportOriginalEdit;
     $("#saveSections").disabled = !reportIsDirty;
     $("#reportDirtyHint").textContent = reportIsDirty ? "有未保存修改；保存后需重新生成图片并再次预览。" : "修改后保存会清除旧图片和审核状态。";
     $("#reportDirtyHint").className = reportIsDirty ? "dirty" : "";
@@ -529,6 +597,7 @@
     if (reportIsDirty && !window.confirm("当前修改尚未保存，确定放弃吗？")) return false;
     reportIsDirty = false;
     $("#reportDialog").close();
+    if (routeFromHash() === "reports" && editReportIdFromHash()) window.history.replaceState(null, "", "#/reports");
     return true;
   };
 
@@ -855,7 +924,12 @@
   $("#clearLog").addEventListener("click", () => { logBox.textContent = "等待操作。"; });
   $("#menuToggle").addEventListener("click", () => $("#appSidebar").classList.contains("show") ? closeSidebar() : openSidebar());
   $("#sidebarBackdrop").addEventListener("click", closeSidebar);
-  window.addEventListener("hashchange", () => setRoute(routeFromHash()));
+  window.addEventListener("hashchange", () => {
+    setRoute(routeFromHash());
+    if (routeFromHash() === "reports" && editReportIdFromHash() && (accessConnected || tokenInput.value.trim())) {
+      run("打开周报编辑器", () => openReport(editReportIdFromHash()), {refresh: false});
+    }
+  });
 
   $$("[data-go]").forEach((button) => button.addEventListener("click", () => { window.location.hash = `#/${button.dataset.go}`; }));
   $$("[data-report-filter]").forEach((button) => button.addEventListener("click", () => {
@@ -935,6 +1009,8 @@
   });
 
   SECTION_KEYS.forEach((key) => $(`#section-${key}`).addEventListener("input", updateReportDirtyState));
+  $("#reportEditTitle").addEventListener("input", updateReportDirtyState);
+  $("#reportCategorySections").addEventListener("input", updateReportDirtyState);
   $("#closeReportDialog").addEventListener("click", closeReportEditor);
   $("#cancelSections").addEventListener("click", closeReportEditor);
   $("#reportDialog").addEventListener("cancel", (event) => {
@@ -944,12 +1020,32 @@
   });
   $("#saveSections").addEventListener("click", () => run("保存周报正文", async () => {
     if (!activeReportId) throw new Error("未选择周报");
-    const sections = currentReportSections();
-    const data = await api(`/api/reports/${activeReportId}/sections`, {method: "PUT", body: JSON.stringify({sections})});
+    const payload = currentReportEditPayload();
+    const data = await api(`/api/reports/${activeReportId}/sections`, {method: "PUT", body: JSON.stringify(payload)});
     reportIsDirty = false;
     $("#reportDialog").close();
+    if (routeFromHash() === "reports" && editReportIdFromHash()) window.history.replaceState(null, "", "#/reports");
     return data;
   }));
+  $("#personalEditDialog").addEventListener("input", updatePersonalDirtyState);
+  $("#closePersonalEdit").addEventListener("click", closePersonalEditor);
+  $("#cancelPersonalEdit").addEventListener("click", closePersonalEditor);
+  $("#personalEditDialog").addEventListener("cancel", (event) => {
+    if (!personalIsDirty) return;
+    event.preventDefault();
+    closePersonalEditor();
+  });
+  $("#savePersonalEdit").addEventListener("click", () => run("保存个人周报", async () => {
+    if (!activePersonalReport?.reportId) throw new Error("未选择个人周报");
+    const payload = currentPersonalEditPayload();
+    const data = await api(`/api/personal-reports/${activePersonalReport.reportId}`, {method: "PUT", body: JSON.stringify(payload)});
+    personalIsDirty = false;
+    $("#personalEditDialog").close();
+    activePersonalReport = data;
+    renderPersonalReport(data);
+    await loadPersonalContext(data.reportId);
+    return data;
+  }, {refresh: false}));
 
   document.addEventListener("click", (event) => {
     if (event.target.closest("[data-start-login]")) {
@@ -964,6 +1060,10 @@
     if (event.target.closest("[data-open-auth]")) {
       $(".auth-menu").open = true;
       tokenInput.focus();
+      return;
+    }
+    if (event.target.closest("[data-personal-edit]")) {
+      run("打开个人周报编辑器", openPersonalEditor, {refresh: false});
       return;
     }
     const action = event.target.closest("[data-action]")?.dataset.action;
@@ -1045,6 +1145,7 @@
         sessionStorage.removeItem("weeklyReportManualLogout");
         setAccessConnected(currentIdentityName);
         await refreshAll();
+        if (routeFromHash() === "reports" && editReportIdFromHash()) await openReport(editReportIdFromHash());
         if (routeFromHash() === "personal-reports") await loadPersonalContext(personalReportIdFromHash());
         return;
       }
@@ -1054,6 +1155,7 @@
       }
       if (tokenInput.value) {
         await refreshAll();
+        if (routeFromHash() === "reports" && editReportIdFromHash()) await openReport(editReportIdFromHash());
         return;
       }
       setAccessDisconnected(ssoConfigured ? "请使用钉钉登录。" : "钉钉登录尚未配置，可使用运维令牌兜底。", {open: false});

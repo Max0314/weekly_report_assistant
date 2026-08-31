@@ -14,6 +14,7 @@
 - **人员覆盖**：产品经理名单来自 AI 表，项目经理可由显式名单和 `bi_center` 职位关键词组成；管理页显示缺报人员并可人工发送一次性单聊提醒。
 - **子路径部署**：`APP_BASE_PATH`、相对静态资源和前端 API 解析均支持共享域名下的 `/weekly-assistant/`。
 - **钉钉身份登录**：管理页首次访问通过钉钉 OAuth 验证身份；能匹配到 `bi_center` 有效在职人员目录的账号即可进入，不依赖周报确认人配置。会话使用独立密钥签名的 `HttpOnly` Cookie，`ADMIN_API_TOKEN` 仅保留为运维兜底。
+- **团队与个人周报编辑**：详情页可从“外部打开”左侧进入团队周报编辑器，维护标题、六个总结区块和各分类摘要；个人周报允许本人维护个人总结、分类摘要及事项展示内容，审核人可代为编辑。多维表事实、统计口径和 TB 官方项目状态保持只读。任一保存都会清除旧预览、图片和审核结果，要求重新走预览与审核流程。
 
 详细流程见 [架构与数据口径](docs/architecture.md)，开放平台配置见 [钉钉配置清单](docs/dingtalk-open-platform.md)。
 
@@ -66,6 +67,8 @@ copy .env.example .env
   "approverTargets": [{"name": "接收人", "userId": "user-id", "enabled": true}]
 }
 ```
+
+个人编辑覆盖写入独立的 `weekly_report_personal_edit` 表，服务启动时通过 `CREATE TABLE IF NOT EXISTS` 自动完成增量建表，对已有周报和多维表事实快照没有数据迁移或改写。回滚旧版本前可保留该表，旧代码会忽略它；如显式删除该表，只会丢失个人周报的人工覆盖内容，团队周报和源记录不受影响。
 
 AI 模型配置是可选项；`AI_PROVIDER` 标记供应商，`AI_BASE_URL`、`AI_API_KEY`、`AI_MODEL` 三项齐全时调用 OpenAI-compatible Chat Completions，否则使用确定性模板并在周报中标记 `fallback/deterministic`。管理页提供与 `bi_center` 一致的 Provider、API Base、模型名、API Key 脱敏、连接测试、保存和恢复部署配置能力；页面保存的是本服务独立覆盖，不会反向修改 `bi_center`。
 

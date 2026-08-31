@@ -236,6 +236,20 @@ CREATE TABLE IF NOT EXISTS weekly_report (
 CREATE INDEX IF NOT EXISTS idx_weekly_report_period ON weekly_report(period_key, report_kind, version DESC);
 CREATE INDEX IF NOT EXISTS idx_weekly_report_state ON weekly_report(workflow_state, updated_at DESC);
 
+CREATE TABLE IF NOT EXISTS weekly_report_personal_edit (
+    report_id INTEGER NOT NULL,
+    user_id TEXT NOT NULL,
+    summary TEXT NOT NULL DEFAULT '',
+    category_digests_json TEXT NOT NULL DEFAULT '{}',
+    item_overrides_json TEXT NOT NULL DEFAULT '{}',
+    updated_by TEXT NOT NULL DEFAULT '',
+    updated_at TEXT NOT NULL,
+    PRIMARY KEY(report_id, user_id),
+    FOREIGN KEY(report_id) REFERENCES weekly_report(id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_weekly_report_personal_edit_updated
+ON weekly_report_personal_edit(updated_at DESC);
+
 CREATE TABLE IF NOT EXISTS dingtalk_robot_event (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     conversation_id TEXT NOT NULL DEFAULT '',

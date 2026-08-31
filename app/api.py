@@ -24,7 +24,7 @@ from .services.delivery import delivery_service
 from .services.directory import directory_service
 from .services.model_config import ModelConfigError, model_config_service
 from .services.rendering import report_html, report_renderer
-from .services.reports import REPORT_KINDS, report_service
+from .services.reports import FINAL_STATES, REPORT_KINDS, report_service
 from .services.robot_commands import robot_command_service
 from .services.scheduler import scheduler_service
 from .services.teambition import teambition_service
@@ -43,6 +43,14 @@ class GenerateBody(BaseModel):
 
 class SectionsBody(BaseModel):
     sections: dict[str, Any]
+    title: str | None = Field(default=None, max_length=200)
+
+
+class PersonalEditBody(BaseModel):
+    userId: str = Field(min_length=1, max_length=200)
+    summary: str = Field(default="", max_length=12000)
+    categoryDigests: dict[str, str] = Field(default_factory=dict)
+    itemOverrides: dict[str, dict[str, Any]] = Field(default_factory=dict)
 
 
 class ReasonBody(BaseModel):
@@ -584,11 +592,41 @@ def get_personal_report(
         raise HTTPException(status_code=403, detail="无权查看该成员的个人周报")
     person = directory_service.lookup_by_user_id().get(target_user_id, {})
     try:
-        return report_service.personal(
+        result = report_service.personal(
             report_id,
             user_id=target_user_id,
             name=str(person.get("employee_name") or (identity.name if target_user_id == identity.user_id else "")),
         )
+        result["canEdit"] = (
+            result.get("workflowState") not in FINAL_STATES
+            and (target_user_id == identity.user_id or full_scope)
+        )
+        return result
+    except Exception as exc:
+        _raise_api_error(exc)
+
+
+@router.put("/api/personal-reports/{report_id}")
+def update_personal_report(
+    report_id: int,
+    body: PersonalEditBody,
+    identity: AdminIdentity = Depends(_session_identity),
+) -> dict[str, Any]:
+    target_user_id = str(body.userId or "").strip()
+    full_scope = _personal_full_scope(identity)
+    if target_user_id != identity.user_id and not full_scope:
+        raise HTTPException(status_code=403, detail="无权编辑该成员的个人周报")
+    try:
+        result = report_service.update_personal(
+            report_id,
+            user_id=target_user_id,
+            summary=body.summary,
+            category_digests=body.categoryDigests,
+            item_overrides=body.itemOverrides,
+            actor=identity.actor,
+        )
+        result["canEdit"] = True
+        return result
     except Exception as exc:
         _raise_api_error(exc)
 
@@ -625,7 +663,12 @@ def get_report_public_urls(report_id: int, _: str = Depends(_admin_token)) -> di
 @router.put("/api/reports/{report_id}/sections")
 def update_report(report_id: int, body: SectionsBody, actor: str = Depends(_admin_token)) -> dict[str, Any]:
     try:
-        return report_service.update_sections(report_id, body.sections, actor=actor)
+        return report_service.update_sections(
+            report_id,
+            body.sections,
+            actor=actor,
+            title=body.title,
+        )
     except Exception as exc:
         _raise_api_error(exc)
 
@@ -741,6 +784,11 @@ def public_report(report_id: int, expires: int, token: str) -> HTMLResponse:
             report,
             interactive=True,
             personal_report_url=report_renderer.personal_report_url(report_id),
+            edit_report_url=(
+                report_renderer.edit_report_app_url(report_id)
+                if report.get("workflowState") not in FINAL_STATES
+                else ""
+            ),
         )
     )
 

@@ -63,6 +63,7 @@ def report_html(
     *,
     interactive: bool = False,
     personal_report_url: str = "",
+    edit_report_url: str = "",
 ) -> str:
     sections = report.get("sections") or {}
     metrics = report.get("metrics") or {}
@@ -97,9 +98,15 @@ def report_html(
         '查看个人周报</a>'
         if interactive and personal_report_url else ""
     )
+    edit_action = (
+        f'<a class="edit-open" href="{html.escape(edit_report_url, quote=True)}" '
+        'target="_blank" rel="noopener noreferrer">✎ 编辑周报</a>'
+        if interactive and edit_report_url else ""
+    )
     interactive_actions = (
         '<div class="hero-actions"><span class="readonly-pill">只读浏览</span>'
         f'{personal_action}'
+        f'{edit_action}'
         '<a id="externalOpen" class="external-open" target="_blank" rel="noopener noreferrer" '
         'aria-label="在外部浏览器打开周报">↗ 外部打开</a></div>'
         if interactive else ""
@@ -119,10 +126,11 @@ def report_html(
 .hero h1{{font-size:42px;margin:0 0 14px}} .hero p{{font-size:20px;margin:0;opacity:.9}}
 .hero-actions{{display:flex;align-items:center;justify-content:flex-end;flex-wrap:wrap;gap:8px;flex:0 0 auto}}
 .readonly-pill{{display:inline-flex;flex:0 0 auto;padding:8px 13px;border:1px solid rgba(255,255,255,.3);border-radius:999px;background:rgba(255,255,255,.12);font-size:14px;font-weight:700}}
-.personal-open,.external-open{{display:inline-flex;align-items:center;padding:8px 13px;border-radius:999px;text-decoration:none;font-size:14px;font-weight:800}}
+.personal-open,.edit-open,.external-open{{display:inline-flex;align-items:center;padding:8px 13px;border-radius:999px;text-decoration:none;font-size:14px;font-weight:800}}
 .personal-open{{border:1px solid rgba(255,255,255,.34);background:rgba(255,255,255,.14);color:#fff}}
+.edit-open{{border:1px solid rgba(255,255,255,.34);background:rgba(255,255,255,.14);color:#fff}}
 .external-open{{background:#fff;color:#17517a;box-shadow:0 5px 14px rgba(0,0,0,.12)}}
-.personal-open:hover{{background:rgba(255,255,255,.22)}}
+.personal-open:hover,.edit-open:hover{{background:rgba(255,255,255,.22)}}
 .external-open:hover{{background:#eff8ff}}
 .stats{{display:grid;grid-template-columns:repeat(5,1fr);gap:16px;margin:24px 0}}
 .stat,.metric,.card{{background:#fff;border:1px solid #dce5ef;border-radius:18px;box-shadow:0 8px 24px rgba(23,59,104,.06)}}
@@ -183,7 +191,7 @@ th:nth-child(1){{width:18%}} th:nth-child(3){{width:11%}} th:nth-child(4){{width
   .foot{{margin-top:16px;font-size:11px;line-height:1.6;text-align:left}}
 }}
 @media(max-width:520px){{
-  .page{{padding:10px}} .hero{{padding:20px 17px}} .hero-heading{{display:block}} .hero h1{{font-size:26px}} .hero-actions{{justify-content:flex-start;margin-top:14px}} .readonly-pill,.personal-open,.external-open{{padding:6px 9px;font-size:11px}}
+  .page{{padding:10px}} .hero{{padding:20px 17px}} .hero-heading{{display:block}} .hero h1{{font-size:26px}} .hero-actions{{justify-content:flex-start;margin-top:14px}} .readonly-pill,.personal-open,.edit-open,.external-open{{padding:6px 9px;font-size:11px}}
   .metrics{{grid-template-columns:repeat(2,1fr)}}
 }}
 </style></head><body><main class="page">
@@ -295,6 +303,12 @@ class ReportRenderer:
         if not base or not self.settings.dingtalk_sso_configured:
             return ""
         return f"{base}/#/personal-reports?reportId={int(report_id)}"
+
+    def edit_report_app_url(self, report_id: int) -> str:
+        base = self.settings.public_base_url.strip().rstrip("/")
+        if not base or not self.settings.dingtalk_sso_configured:
+            return ""
+        return f"{base}/#/reports?editReportId={int(report_id)}"
 
 
 report_renderer = ReportRenderer()

@@ -21,6 +21,22 @@ KEY_PROJECT_TABLE_ID = next(
 )
 ROSTER_TABLE_IDS = {str(item["tableId"]) for item in SOURCE_TABLES if item.get("roster")}
 FINAL_STATES = {"formal_sent", "recalled", "cancelled"}
+EDITABLE_SECTION_KEYS = (
+    "executiveSummary",
+    "productHighlights",
+    "projectHighlights",
+    "risks",
+    "nextPlans",
+    "supportNeeds",
+)
+PERSONAL_ITEM_EDIT_KEYS = (
+    "title",
+    "status",
+    "priority",
+    "progressText",
+    "planText",
+    "riskText",
+)
 TB_DEGREE_LABELS = {
     "minor": "轻微",
     "low": "较低",
@@ -900,6 +916,12 @@ class ReportService:
         normalized_user_id = str(user_id or "").strip()
         if not normalized_user_id:
             raise ValueError("personal report user is required")
+        edit_row = self.db.fetch_one(
+            "SELECT * FROM weekly_report_personal_edit WHERE report_id=? AND user_id=?",
+            (int(report_id), normalized_user_id),
+        ) or {}
+        category_digests = _json(edit_row.get("category_digests_json"), {})
+        item_overrides = _json(edit_row.get("item_overrides_json"), {})
         personal_items: list[dict[str, Any]] = []
         display_name = str(name or "").strip()
         for source in report.get("sources") or []:
@@ -911,6 +933,12 @@ class ReportService:
             if not roles:
                 continue
             item = {**source, "roles": list(dict.fromkeys(roles))}
+            item_key = str(item.get("recordId") or item.get("id") or "").strip()
+            override = item_overrides.get(item_key) if item_key else None
+            if isinstance(override, dict):
+                for key in PERSONAL_ITEM_EDIT_KEYS:
+                    if key in override:
+                        item[key] = str(override.get(key) or "").strip()
             personal_items.append(item)
             if not display_name:
                 matched = next(
@@ -931,12 +959,18 @@ class ReportService:
             for role in item.get("roles") or []:
                 role_counts[role] = role_counts.get(role, 0) + 1
         metrics["byRole"] = role_counts
-        summary = (
+        generated_summary = (
             f"{display_name or normalized_user_id}本周共关联 {metrics['itemCount']} 项工作；"
             f"已完成 {completed} 项、进行中或待处理 {metrics['inProgressCount']} 项，"
             f"风险 {metrics['riskCount']} 项、逾期 {metrics['overdueCount']} 项、"
             f"高优先级 {metrics['highPriorityCount']} 项。"
         )
+        summary = str(edit_row.get("summary") or "").strip() or generated_summary
+        category_sections = self._category_sections(personal_items)
+        for section in category_sections:
+            key = str(section.get("key") or "")
+            if key in category_digests:
+                section["digest"] = str(category_digests.get(key) or "").strip()
         return {
             "reportId": report["id"],
             "periodKey": report["periodKey"],
@@ -946,9 +980,92 @@ class ReportService:
             "person": {"userId": normalized_user_id, "name": display_name or normalized_user_id},
             "summary": summary,
             "metrics": metrics,
-            "categorySections": self._category_sections(personal_items),
+            "categorySections": category_sections,
             "items": personal_items,
+            "edit": {
+                "edited": bool(edit_row),
+                "updatedBy": str(edit_row.get("updated_by") or ""),
+                "updatedAt": str(edit_row.get("updated_at") or ""),
+            },
         }
+
+    def update_personal(
+        self,
+        report_id: int,
+        *,
+        user_id: str,
+        summary: str,
+        category_digests: dict[str, Any],
+        item_overrides: dict[str, Any],
+        actor: str,
+    ) -> dict[str, Any]:
+        report = self.get(report_id)
+        if report["workflowState"] in FINAL_STATES:
+            raise ValueError("final report cannot be edited")
+        normalized_user_id = str(user_id or "").strip()
+        if not normalized_user_id:
+            raise ValueError("personal report user is required")
+        current = self.personal(report_id, user_id=normalized_user_id)
+        allowed_items = {
+            str(item.get("recordId") or item.get("id") or "").strip()
+            for item in current.get("items") or []
+            if str(item.get("recordId") or item.get("id") or "").strip()
+        }
+        allowed_categories = {
+            str(item.get("key") or "").strip()
+            for item in current.get("categorySections") or []
+            if str(item.get("key") or "").strip()
+        }
+        clean_categories = {
+            str(key): str(value or "").strip()[:12000]
+            for key, value in (category_digests or {}).items()
+            if str(key) in allowed_categories
+        }
+        clean_items: dict[str, dict[str, str]] = {}
+        for item_key, raw_override in (item_overrides or {}).items():
+            normalized_key = str(item_key or "").strip()
+            if normalized_key not in allowed_items or not isinstance(raw_override, dict):
+                continue
+            clean_items[normalized_key] = {
+                key: str(raw_override.get(key) or "").strip()[:12000]
+                for key in PERSONAL_ITEM_EDIT_KEYS
+                if key in raw_override
+            }
+        timestamp = to_db(now_local())
+        with self.db.transaction() as connection:
+            connection.execute(
+                """
+                INSERT INTO weekly_report_personal_edit(
+                    report_id,user_id,summary,category_digests_json,item_overrides_json,
+                    updated_by,updated_at
+                ) VALUES (?,?,?,?,?,?,?)
+                ON CONFLICT(report_id,user_id) DO UPDATE SET
+                    summary=excluded.summary,
+                    category_digests_json=excluded.category_digests_json,
+                    item_overrides_json=excluded.item_overrides_json,
+                    updated_by=excluded.updated_by,
+                    updated_at=excluded.updated_at
+                """,
+                (
+                    int(report_id),
+                    normalized_user_id,
+                    str(summary or "").strip()[:12000],
+                    json.dumps(clean_categories, ensure_ascii=False, separators=(",", ":")),
+                    json.dumps(clean_items, ensure_ascii=False, separators=(",", ":")),
+                    str(actor or "")[:300],
+                    timestamp,
+                ),
+            )
+            connection.execute(
+                """
+                UPDATE weekly_report SET workflow_state='draft_generated',
+                    previewed_at='',confirm_status='',confirmed_by='',confirmed_at='',
+                    change_request='',image_path='',image_generated_at='',
+                    send_status='',send_error='',sent_at='',updated_at=? WHERE id=?
+                """,
+                (timestamp, int(report_id)),
+            )
+        return self.personal(report_id, user_id=normalized_user_id)
 
     def personal_members(self, report_id: int) -> list[dict[str, Any]]:
         report = self.get(report_id, include_sources=True)
@@ -1007,23 +1124,61 @@ class ReportService:
         rows = self.db.fetch_all("SELECT * FROM weekly_report ORDER BY created_at DESC, id DESC LIMIT ?", (limit,))
         return [self._format_report(row) for row in rows]
 
-    def update_sections(self, report_id: int, sections: dict[str, Any], *, actor: str) -> dict[str, Any]:
+    def update_sections(
+        self,
+        report_id: int,
+        sections: dict[str, Any],
+        *,
+        actor: str,
+        title: str | None = None,
+    ) -> dict[str, Any]:
         report = self.get(report_id)
         if report["workflowState"] in FINAL_STATES:
             raise ValueError("final report cannot be edited")
         merged = {**report["sections"]}
-        for key in (
-            "executiveSummary", "productHighlights", "projectHighlights", "risks", "nextPlans", "supportNeeds"
-        ):
+        for key in EDITABLE_SECTION_KEYS:
             if key in sections:
-                merged[key] = str(sections.get(key) or "").strip()
+                merged[key] = str(sections.get(key) or "").strip()[:20000]
+        incoming_categories = sections.get("categorySections")
+        if isinstance(incoming_categories, list):
+            edits = {
+                str(item.get("key") or ""): item
+                for item in incoming_categories
+                if isinstance(item, dict) and str(item.get("key") or "")
+            }
+            categories: list[dict[str, Any]] = []
+            for category in merged.get("categorySections") or []:
+                if not isinstance(category, dict):
+                    continue
+                edit = edits.get(str(category.get("key") or ""))
+                categories.append(
+                    {
+                        **category,
+                        **(
+                            {"digest": str(edit.get("digest") or "").strip()[:12000]}
+                            if isinstance(edit, dict) and "digest" in edit
+                            else {}
+                        ),
+                    }
+                )
+            merged["categorySections"] = categories
+        normalized_title = report["title"] if title is None else str(title or "").strip()
+        if not normalized_title:
+            raise ValueError("report title cannot be empty")
         timestamp = to_db(now_local())
         self.db.execute(
             """
-            UPDATE weekly_report SET sections_json=?, workflow_state='draft_generated',
-                confirm_status='', change_request='', image_path='', image_generated_at='', updated_at=? WHERE id=?
+            UPDATE weekly_report SET title=?,sections_json=?,workflow_state='draft_generated',
+                previewed_at='',confirm_status='',confirmed_by='',confirmed_at='',
+                change_request='',image_path='',image_generated_at='',
+                send_status='',send_error='',sent_at='',updated_at=? WHERE id=?
             """,
-            (json.dumps(merged, ensure_ascii=False), timestamp, int(report_id)),
+            (
+                normalized_title[:200],
+                json.dumps(merged, ensure_ascii=False),
+                timestamp,
+                int(report_id),
+            ),
         )
         return self.get(report_id, include_sources=True)
 

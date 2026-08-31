@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <meta name="theme-color" content="#f6f8fb">
   <title>产品与项目经理周报助手</title>
-  <link rel="stylesheet" href="static/styles.css?v=20260831h">
+  <link rel="stylesheet" href="static/styles.css?v=20260831i">
 </head>
 <body>
   <div class="app-shell">
@@ -358,18 +358,29 @@
   <dialog id="reportDialog">
     <div class="dialog-head"><div><p class="eyebrow">REPORT DETAIL</p><h2 id="reportDialogTitle">周报详情</h2><p id="reportDialogMeta"></p></div><button id="closeReportDialog" class="icon-button" type="button" aria-label="关闭">×</button></div>
     <div class="section-editor-grid">
-      <label>管理摘要<textarea id="section-executiveSummary"></textarea></label>
-      <label hidden>产品工作亮点（兼容字段）<textarea id="section-productHighlights"></textarea></label>
-      <label hidden>项目工作亮点（兼容字段）<textarea id="section-projectHighlights"></textarea></label>
-      <label>风险与问题<textarea id="section-risks"></textarea></label>
+      <label class="full-span">周报标题<input id="reportEditTitle" maxlength="200"></label>
+      <label>本周进展摘要<textarea id="section-executiveSummary"></textarea></label>
+      <label>产品管理进展<textarea id="section-productHighlights"></textarea></label>
+      <label>项目管理进展<textarea id="section-projectHighlights"></textarea></label>
+      <label>风险与待跟进<textarea id="section-risks"></textarea></label>
       <label>下周计划<textarea id="section-nextPlans"></textarea></label>
-      <label>需协调支持<textarea id="section-supportNeeds"></textarea></label>
+      <label>需协调与支持<textarea id="section-supportNeeds"></textarea></label>
     </div>
-    <section class="dialog-category-section"><div><strong>按业务条目分类</strong><span>分类正文根据本版事实快照自动生成，避免编辑后与统计不一致。</span></div><div id="reportCategorySections" class="dialog-category-list"></div></section>
-    <div class="dialog-actions"><div class="dialog-action-copy"><strong>编辑周报正文</strong><span id="reportDirtyHint">修改后保存会清除旧图片和审核状态。</span></div><div class="actions"><button id="cancelSections" class="secondary" type="button">取消</button><button id="saveSections" type="button" disabled>保存修改</button></div></div>
+    <section class="dialog-category-section"><div><strong>分类概览摘要</strong><span>每个分类的摘要可以编辑；条目数量、负责人及原始事实仍按本版快照计算。</span></div><div id="reportCategorySections" class="dialog-category-list"></div></section>
+    <div class="dialog-actions"><div class="dialog-action-copy"><strong>编辑团队周报</strong><span id="reportDirtyHint">修改后保存会清除旧图片、预览和审核状态。</span></div><div class="actions"><button id="cancelSections" class="secondary" type="button">取消</button><button id="saveSections" type="button" disabled>保存全部修改</button></div></div>
     <details id="reportSourceDetails" class="source-details"><summary>查看本版纳入的事实清单</summary><div id="reportSources" class="source-list"></div></details>
   </dialog>
 
-  <script src="static/app.js?v=20260831h"></script>
+  <dialog id="personalEditDialog">
+    <div class="dialog-head"><div><p class="eyebrow">PERSONAL REPORT EDITOR</p><h2 id="personalEditTitle">编辑个人周报</h2><p id="personalEditMeta"></p></div><button id="closePersonalEdit" class="icon-button" type="button" aria-label="关闭">×</button></div>
+    <div class="personal-edit-body">
+      <label>个人本周总结<textarea id="personalEditSummary" maxlength="12000"></textarea></label>
+      <section class="dialog-category-section personal-edit-categories"><div><strong>个人分类摘要</strong><span>只影响当前成员的个人周报，不会改写团队统计或多维表原始记录。</span></div><div id="personalEditCategories" class="dialog-category-list"></div></section>
+      <section class="dialog-category-section personal-edit-items"><div><strong>个人事项内容</strong><span>可修改标题、状态、优先级、本周进展、下周计划和风险；TB项目状态为官方来源，只读保留。</span></div><div id="personalEditItems" class="personal-item-editor-list"></div></section>
+    </div>
+    <div class="dialog-actions"><div class="dialog-action-copy"><strong>编辑个人周报</strong><span id="personalDirtyHint">保存后需要重新预览和审核团队周报。</span></div><div class="actions"><button id="cancelPersonalEdit" class="secondary" type="button">取消</button><button id="savePersonalEdit" type="button" disabled>保存个人周报</button></div></div>
+  </dialog>
+
+  <script src="static/app.js?v=20260831i"></script>
 </body>
 </html>

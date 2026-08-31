@@ -29,6 +29,10 @@ class RenderingAndAuthTests(unittest.TestCase):
             "https://example.test/weekly-assistant/#/personal-reports?reportId=7",
             renderer.personal_report_app_url(7),
         )
+        self.assertEqual(
+            "https://example.test/weekly-assistant/#/reports?editReportId=7",
+            renderer.edit_report_app_url(7),
+        )
 
     def test_inline_numbered_sections_are_split_without_breaking_decimals(self) -> None:
         output = _section_html("1. 完成流程优化，周期压缩至3.5天。 2. 样机功耗达到2.3W。 3. 发布规范。")
@@ -49,7 +53,13 @@ class RenderingAndAuthTests(unittest.TestCase):
             "sources": [{"title": "<b>事项</b>", "category": "测试"}],
         }
         personal_url = "https://example.test/#/personal-reports?reportId=1"
-        output = report_html(report, interactive=True, personal_report_url=personal_url)
+        edit_url = "https://example.test/#/reports?editReportId=1"
+        output = report_html(
+            report,
+            interactive=True,
+            personal_report_url=personal_url,
+            edit_report_url=edit_url,
+        )
         self.assertNotIn("<script>alert(1)</script>", output)
         self.assertIn("&lt;script&gt;", output)
         self.assertIn("&lt;b&gt;事项&lt;/b&gt;", output)
@@ -60,11 +70,15 @@ class RenderingAndAuthTests(unittest.TestCase):
         self.assertIn('class="readonly-pill">只读浏览</span>', output)
         self.assertIn('class="external-open"', output)
         self.assertIn('class="personal-open"', output)
+        self.assertIn('class="edit-open"', output)
         self.assertIn("查看个人周报", output)
+        self.assertIn("编辑周报", output)
         self.assertIn(personal_url, output)
+        self.assertLess(output.index('class="edit-open"'), output.index('class="external-open"'))
         self.assertIn("max-width:1480px", output)
         self.assertNotIn('class="external-open"', report_html(report))
         self.assertNotIn('class="personal-open"', report_html(report))
+        self.assertNotIn('class="edit-open"', report_html(report))
 
     def test_report_html_uses_category_digest_instead_of_raw_details(self) -> None:
         report = {

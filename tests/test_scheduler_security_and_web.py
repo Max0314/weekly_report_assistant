@@ -7,10 +7,10 @@ from datetime import datetime
 from pathlib import Path
 from unittest.mock import patch
 
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.testclient import TestClient
 
-from app.api import personal_report_context, readiness, router
+from app.api import PersonalEditBody, personal_report_context, readiness, router, update_personal_report
 from app.config import Settings, settings
 from app.db import Database
 from app.services.directory import directory_service
@@ -60,6 +60,21 @@ class SchedulerSecurityAndWebTests(unittest.TestCase):
             self.assertEqual("viewer", context["members"][0]["userId"])
             self.assertEqual("viewer", context["defaultUserId"])
             self.assertTrue(context["viewerHasReport"])
+
+    def test_personal_edit_is_limited_to_self_or_configured_approver(self) -> None:
+        identity = AdminIdentity(user_id="viewer", name="普通成员")
+        body = PersonalEditBody(userId="other", summary="修改", categoryDigests={}, itemOverrides={})
+        with patch("app.api._personal_full_scope", return_value=False):
+            with self.assertRaises(HTTPException) as denied:
+                update_personal_report(7, body, identity)
+        self.assertEqual(403, denied.exception.status_code)
+
+        own_body = PersonalEditBody(userId="viewer", summary="自己的修改", categoryDigests={}, itemOverrides={})
+        with patch("app.api._personal_full_scope", return_value=False), patch("app.api.report_service") as reports:
+            reports.update_personal.return_value = {"reportId": 7, "workflowState": "draft_generated"}
+            result = update_personal_report(7, own_body, identity)
+        self.assertTrue(result["canEdit"])
+        reports.update_personal.assert_called_once()
 
     def test_source_snapshot_requires_latest_success_and_fresh_data(self) -> None:
         scheduler = SchedulerService(database=self.db)
@@ -301,14 +316,19 @@ class SchedulerSecurityAndWebTests(unittest.TestCase):
         self.assertIn('api("/api/config"', script)
         self.assertIn('api("/api/model-config"', script)
         self.assertIn('api("/api/model-config/test"', script)
-        self.assertIn("styles.css?v=20260831h", html)
-        self.assertIn("app.js?v=20260831h", html)
+        self.assertIn("styles.css?v=20260831i", html)
+        self.assertIn("app.js?v=20260831i", html)
         self.assertIn('data-route="personal-reports"', html)
         self.assertIn('data-page="personal-reports"', html)
         self.assertIn('id="personalCharts"', html)
         self.assertIn('id="personalMemberSearch"', html)
         self.assertIn("personal-external-link", script)
+        self.assertIn("personal-edit-button", script)
         self.assertIn("personal-donut", script)
+        self.assertIn('id="personalEditDialog"', html)
+        self.assertIn('id="reportEditTitle"', html)
+        self.assertIn('data-report-category-key', script)
+        self.assertIn('api(`/api/personal-reports/${activePersonalReport.reportId}`', script)
         self.assertIn('id="cancelSections"', html)
         self.assertIn('id="openLatestReport"', html)
         self.assertIn('data-route="reports"', html)

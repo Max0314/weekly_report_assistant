@@ -218,6 +218,86 @@ class ReportsAndDeliveryTests(unittest.TestCase):
         self.assertTrue(historical["sourceSnapshot"])
         self.assertEqual("版本规划", historical["sources"][0]["title"])
 
+    def test_team_and_personal_edits_persist_all_supported_fields_and_reset_review(self) -> None:
+        self.seed_source()
+        report = self.reports.generate(period_key="week:20260810", use_ai=False)
+        report_id = report["id"]
+        category = next(
+            item for item in report["sections"]["categorySections"] if item["itemCount"]
+        )
+        self.db.execute(
+            """
+            UPDATE weekly_report SET workflow_state='awaiting_approval',previewed_at='2026-08-14T09:00:00+08:00',
+                confirm_status='confirmed',confirmed_by='approver',confirmed_at='2026-08-14T09:05:00+08:00',
+                image_path='/tmp/report.png',image_generated_at='2026-08-14T09:00:00+08:00'
+            WHERE id=?
+            """,
+            (report_id,),
+        )
+        edited = self.reports.update_sections(
+            report_id,
+            {
+                "executiveSummary": "人工调整后的本周摘要",
+                "productHighlights": "产品管理进展已调整",
+                "projectHighlights": "项目管理进展已调整",
+                "risks": "风险已调整",
+                "nextPlans": "计划已调整",
+                "supportNeeds": "支持事项已调整",
+                "categorySections": [
+                    {"key": category["key"], "digest": "人工分类摘要"}
+                ],
+            },
+            actor="editor",
+            title="人工编辑周报标题",
+        )
+        self.assertEqual("人工编辑周报标题", edited["title"])
+        self.assertEqual("产品管理进展已调整", edited["sections"]["productHighlights"])
+        edited_category = next(
+            item
+            for item in edited["sections"]["categorySections"]
+            if item["key"] == category["key"]
+        )
+        self.assertEqual("人工分类摘要", edited_category["digest"])
+        self.assertEqual("draft_generated", edited["workflowState"])
+        self.assertFalse(edited["imageReady"])
+        self.assertEqual("", edited["previewedAt"])
+        self.assertEqual("", edited["confirmStatus"])
+        self.assertEqual("", edited["confirmedBy"])
+
+        personal = self.reports.update_personal(
+            report_id,
+            user_id="u1",
+            summary="产品甲的人工个人总结",
+            category_digests={category["key"]: "个人分类摘要"},
+            item_overrides={
+                "r1": {
+                    "title": "个人展示标题",
+                    "status": "已完成",
+                    "priority": "高",
+                    "progressText": "个人本周进展",
+                    "planText": "个人下周计划",
+                    "riskText": "个人风险说明",
+                }
+            },
+            actor="dingtalk:u1",
+        )
+        self.assertEqual("产品甲的人工个人总结", personal["summary"])
+        self.assertTrue(personal["edit"]["edited"])
+        self.assertEqual("个人分类摘要", personal["categorySections"][0]["digest"])
+        self.assertEqual("个人展示标题", personal["items"][0]["title"])
+        self.assertEqual("已完成", personal["items"][0]["status"])
+        self.assertEqual("个人本周进展", personal["items"][0]["progressText"])
+        self.assertEqual(1, personal["metrics"]["completedCount"])
+        self.assertEqual(1, personal["metrics"]["riskCount"])
+        self.assertEqual(1, personal["metrics"]["highPriorityCount"])
+        frozen = self.reports.get(report_id, include_sources=True)
+        self.assertEqual("版本规划", frozen["sources"][0]["title"])
+        stored = self.db.fetch_one(
+            "SELECT updated_by FROM weekly_report_personal_edit WHERE report_id=? AND user_id='u1'",
+            (report_id,),
+        )
+        self.assertEqual("dingtalk:u1", stored["updated_by"])
+
     def test_project_manager_coverage_combines_roster_and_weekly_facts(self) -> None:
         refreshed_at = "2026-08-13T09:00:00+08:00"
         for user_id, name in (("u-covered", "已填经理"), ("u-missing", "缺报经理")):
