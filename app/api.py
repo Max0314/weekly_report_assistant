@@ -65,6 +65,10 @@ class CoverageBody(BaseModel):
     reportKind: str = "combined"
 
 
+class TestPushBody(BaseModel):
+    releaseKey: str = Field(min_length=1, max_length=120)
+
+
 def _admin_token(
     request: Request,
     authorization: str | None = Header(default=None),
@@ -641,6 +645,21 @@ def preview_report(report_id: int, _: str = Depends(_admin_token)) -> dict[str, 
         if not report.get("imageReady"):
             report_renderer.render(report_id)
         return delivery_service.preview(report_id)
+    except Exception as exc:
+        _raise_api_error(exc)
+
+
+@router.post("/api/reports/{report_id}/test-push")
+def test_push_report(
+    report_id: int,
+    body: TestPushBody,
+    _: str = Depends(_admin_token),
+) -> dict[str, Any]:
+    try:
+        report = report_service.get(report_id)
+        if not report.get("imageReady"):
+            report_renderer.render(report_id)
+        return delivery_service.test_push(report_id, release_key=body.releaseKey)
     except Exception as exc:
         _raise_api_error(exc)
 

@@ -247,9 +247,11 @@ class DeliveryService:
         *,
         preview: bool,
         groups: list[dict[str, Any]] | None = None,
+        test_push_key: str = "",
     ) -> dict[str, Any]:
         config = self.config_service.get()
         report = self.reports.get(report_id)
+        is_test_push = bool(test_push_key)
         group_targets = groups if groups is not None else (
             config["previewGroupTargets"] if preview else config["formalGroupTargets"]
         )
@@ -280,7 +282,7 @@ class DeliveryService:
         )
         if not targets:
             raise DeliveryError("preview target is not configured" if preview else "formal target is not configured")
-        if preview and (
+        if preview and not is_test_push and (
             report["workflowState"] in {"formal_sent", "recalled", "cancelled", "need_changes"}
             or report.get("confirmStatus") == "confirmed"
         ):
@@ -321,8 +323,9 @@ class DeliveryService:
             )
         if config.get("sendGroupImages") and not urls.get("imageUrl"):
             raise DeliveryError("PUBLIC_BASE_URL and PUBLIC_LINK_SECRET are required for image delivery")
-        markdown = self._markdown(report, preview=preview)
-        phase = "preview" if preview else "formal"
+        message_is_preview = preview and not is_test_push
+        markdown = self._markdown(report, preview=message_is_preview)
+        phase = f"test-{test_push_key}" if is_test_push else ("preview" if preview else "formal")
         results: list[dict[str, Any]] = []
         sent = 0
         failed = 0
@@ -340,7 +343,7 @@ class DeliveryService:
                 raise DeliveryError(f"delivery is already in progress for {name}")
             else:
                 msg_param: dict[str, Any] = {
-                    "title": f"{'【预览】' if preview else ''}{report['title']}",
+                    "title": f"{'【预览】' if message_is_preview else ''}{report['title']}",
                     "text": markdown,
                 }
                 msg_key = "sampleMarkdown"
@@ -447,7 +450,9 @@ class DeliveryService:
             sent += 1 if image_result.get("sent") else 0
             failed += 0 if image_result.get("sent") else 1
         timestamp = to_db(now_local())
-        if preview:
+        if is_test_push:
+            state = str(report.get("workflowState") or "")
+        elif preview:
             state = "awaiting_approval" if sent and not failed else "retryable_error"
             self.db.execute(
                 """
@@ -470,12 +475,14 @@ class DeliveryService:
             )
         archive_result = (
             self._archive_after_formal(report_id, report_url=str(urls.get("reportUrl") or ""))
-            if not preview and state == "formal_sent"
+            if not preview and not is_test_push and state == "formal_sent"
             else {"status": "not_attempted", "skipped": True, "recordId": "", "error": ""}
         )
         return {
             "sent": sent,
             "failed": failed,
+            "testPush": is_test_push,
+            "releaseKey": test_push_key if is_test_push else "",
             "results": results,
             "archive": archive_result,
             "report": self.reports.get(report_id),
@@ -483,6 +490,24 @@ class DeliveryService:
 
     def preview(self, report_id: int, *, groups: list[dict[str, Any]] | None = None) -> dict[str, Any]:
         return self._send_targets(report_id, preview=True, groups=groups)
+
+    def test_push(self, report_id: int, *, release_key: str) -> dict[str, Any]:
+        normalized_key = re.sub(r"[^0-9A-Za-z._-]+", "-", str(release_key or "").strip()).strip("-._")[:120]
+        if not normalized_key:
+            raise DeliveryError("test push release key is required")
+        groups = [
+            item
+            for item in self.config_service.get().get("previewGroupTargets") or []
+            if item.get("enabled") is not False and str(item.get("name") or "").strip() == "推送测试"
+        ]
+        if len(groups) != 1:
+            raise DeliveryError("exactly one enabled preview group named 推送测试 is required")
+        return self._send_targets(
+            report_id,
+            preview=True,
+            groups=groups,
+            test_push_key=normalized_key,
+        )
 
     def formal(self, report_id: int) -> dict[str, Any]:
         return self._send_targets(report_id, preview=False)

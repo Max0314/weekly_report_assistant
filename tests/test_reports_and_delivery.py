@@ -321,6 +321,38 @@ class ReportsAndDeliveryTests(unittest.TestCase):
         self.assertTrue(second["skipped"])
         self.assertEqual(2, len(robot.group_calls))
 
+    def test_release_test_push_uses_formal_style_without_changing_workflow(self) -> None:
+        report = self.reports.generate(period_key="week:20260810", use_ai=False)
+        self.config.update({
+            "sendGroupImages": False,
+            "previewGroupTargets": [
+                {"name": "推送测试", "openConversationId": "test-group", "robotCode": "robot"},
+                {"name": "其他预览群", "openConversationId": "other-group", "robotCode": "robot"},
+            ],
+        })
+        robot = FakeRobot()
+        delivery = DeliveryService(
+            database=self.db, reports=self.reports, renderer=FakeRenderer(),
+            config_service=self.config, robot=robot, directory=FakeDirectory(),
+        )
+
+        first = delivery.test_push(report["id"], release_key="release-4086292")
+        second = delivery.test_push(report["id"], release_key="release-4086292")
+        third = delivery.test_push(report["id"], release_key="release-next")
+
+        self.assertTrue(first["testPush"])
+        self.assertEqual(1, first["sent"])
+        self.assertEqual("推送测试", first["results"][0]["target"])
+        self.assertNotIn("【预览】", robot.group_calls[0]["msg_param"]["title"])
+        self.assertNotIn("**审核操作**", robot.group_calls[0]["msg_param"]["text"])
+        self.assertEqual("sampleActionCard2", robot.group_calls[0]["msg_key"])
+        self.assertTrue(second["results"][0]["skipped"])
+        self.assertEqual(1, third["sent"])
+        self.assertEqual(2, len(robot.group_calls))
+        current = self.reports.get(report["id"])
+        self.assertEqual(report["workflowState"], current["workflowState"])
+        self.assertEqual(report["confirmStatus"], current["confirmStatus"])
+
     def test_personal_preview_formal_and_recall(self) -> None:
         report = self.reports.generate(period_key="week:20260810", use_ai=False)
         self.config.update({

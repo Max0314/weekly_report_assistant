@@ -13,6 +13,7 @@
 ## 修改与验证
 
 - 优先最小改动，中文文件保持 UTF-8。
+- 当前阶段每次修改在测试、部署和健康检查全部通过后，必须将最新综合版周报按正式版样式推送到且仅推送到“推送测试”群；使用本次部署提交号作为测试推送幂等键，并核对发送结果。该测试推送不得改变周报审核/正式发送状态，也不得替代正式业务群的人工审核。
 - 修改 Python 后运行 `python -m unittest discover -s tests -v` 和 `python -m compileall -q app tests`。
 - 修改 `static/app.js` 后运行 `node --check static/app.js`，并更新 `index.html` 中资源版本号。
 - 数据库结构变化必须同步说明迁移、回滚和已有数据影响。
