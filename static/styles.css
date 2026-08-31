@@ -433,10 +433,10 @@ dialog::backdrop { background: rgba(20, 29, 44, .58); backdrop-filter: blur(3px)
   .metric-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .dashboard-grid, .group-target-grid, .target-columns { grid-template-columns: 1fr; }
   .personal-page-width { max-width: 760px; }
-  .personal-layout { grid-template-columns: 1fr; }
+  .personal-layout { grid-template-columns: minmax(0, 1fr); }
   .personal-report-column { max-width: none; justify-self: stretch; }
-  .personal-members-panel { position: static; display: block; max-height: none; overflow: visible; }
-  .personal-member-list { display: flex; max-height: none; padding: 0 0 4px; overflow-x: auto; overflow-y: hidden; overscroll-behavior-x: contain; scrollbar-gutter: auto; }
+  .personal-members-panel { position: static; display: block; min-width: 0; max-height: none; overflow: hidden; }
+  .personal-member-list { display: flex; width: 100%; max-height: none; padding: 0 0 4px; overflow-x: auto; overflow-y: hidden; overscroll-behavior-x: contain; scrollbar-gutter: auto; }
   .personal-member { flex: 0 0 min(215px, 78vw); }
   .personal-chart-grid { grid-template-columns: 1fr; }
   .checks { grid-template-columns: repeat(2, minmax(0, 1fr)); }
