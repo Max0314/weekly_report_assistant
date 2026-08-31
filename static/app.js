@@ -435,8 +435,9 @@
     $("#personalReportPeriod").innerHTML = reports.length ? reports.map((item) => `<option value="${item.id}" ${Number(item.id) === selected ? "selected" : ""}>${escapeHtml(item.window?.label || item.periodKey)} · v${item.version}</option>`).join("") : '<option value="">暂无综合周报</option>';
     const members = personalContext.members || [];
     const requestedUserId = personalUserIdFromHash();
-    if (requestedUserId && members.some((item) => item.userId === requestedUserId)) activePersonalUserId = requestedUserId;
-    if (!members.some((item) => item.userId === activePersonalUserId)) {
+    if (requestedUserId && members.some((item) => item.userId === requestedUserId)) {
+      activePersonalUserId = requestedUserId;
+    } else {
       activePersonalUserId = personalContext.defaultUserId || members[0]?.userId || personalContext.viewer?.userId || currentIdentityUserId;
     }
     renderPersonalMembers();
