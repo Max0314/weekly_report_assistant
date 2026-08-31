@@ -73,10 +73,46 @@ class DeliveryService:
         ][:3] or ["暂无总结"]
         risk_text = str(sections.get("risks") or "").strip()
         risk_items = [
-            compact(re.sub(r"^\d{1,2}[.、]\s*", "", item.lstrip("-•* ")), 140)
+            compact(re.sub(r"^\d{1,2}[.、]\s*", "", item.lstrip("-•* ")), 120)
             for item in re.split(r"\n+|(?<=。)\s*(?=\d{1,2}[.、]\s*)", risk_text)
             if item.strip()
-        ][:2]
+        ][:3]
+        category_items = sorted(
+            [item for item in sections.get("categorySections") or [] if isinstance(item, dict)],
+            key=lambda item: (int(item.get("order") or 999), str(item.get("label") or "")),
+        )
+
+        def category_details(value: Any) -> list[str]:
+            details: list[str] = []
+            current = ""
+            for raw_line in str(value or "").splitlines():
+                line = raw_line.strip()
+                if not line:
+                    continue
+                bullet = re.match(r"^(?:[-•*]|\d{1,3}[.、])\s*(.*)$", line)
+                if bullet:
+                    if current:
+                        details.append(compact(current, 180))
+                    current = bullet.group(1).strip()
+                elif current:
+                    current = f"{current} {line}"
+                else:
+                    current = line
+            if current:
+                details.append(compact(current, 180))
+            return [] if details == ["暂无"] else details
+
+        category_lines: list[str] = []
+        for category in category_items:
+            label = compact(category.get("label") or "未分类", 40)
+            item_count = int(category.get("itemCount") or 0)
+            category_lines.extend([f"**{label}（{item_count} 项）**", ""])
+            details = category_details(category.get("digest") or category.get("content"))[:5]
+            if not details:
+                category_lines.append("- 暂无填报。")
+            else:
+                category_lines.extend(f"- {compact(detail, 150)}" for detail in details)
+            category_lines.append("")
 
         lines = [
             f"### {prefix}{report.get('title') or '产品与项目管理周报'}",
@@ -92,7 +128,12 @@ class DeliveryService:
             f"- 已完成：**{int(by_status.get('已完成') or 0)}** 项 ｜ 进行中：**{int(by_status.get('进行中') or 0)}** 项",
             f"- 风险：**{int(metrics.get('riskCount') or 0)}** 项 ｜ 逾期：**{int(metrics.get('overdueCount') or 0)}** 项 ｜ 高优先级：**{int(metrics.get('highPriorityCount') or 0)}** 项",
             "",
-            "**管理摘要**",
+            "**分类概览**",
+            "",
+            *category_lines,
+            *(["- 本周期暂无分类事项。"] if not category_items else []),
+            "",
+            "**本周进展摘要**",
             "",
             *(f"> {item}" for item in summary_sentences),
             "",
@@ -100,6 +141,8 @@ class DeliveryService:
             "",
             *(f"{index}. {item}" for index, item in enumerate(risk_items, start=1)),
             *( ["- 暂无需要单独聚焦的风险。"] if not risk_items else [] ),
+            "",
+            "> 完整事项明细保留在周报详情页，消息中仅展示管理摘要。",
         ]
         if preview:
             lines.extend(
@@ -268,6 +311,15 @@ class DeliveryService:
             if config.get("sendGroupImages"):
                 raise DeliveryError(str(exc)) from exc
             urls = {"reportUrl": "", "imageUrl": ""}
+        personal_url = ""
+        if personal_targets:
+            personal_url_factory = getattr(self.renderer, "personal_report_url", None)
+            if callable(personal_url_factory):
+                personal_url = str(personal_url_factory(report_id) or "")
+            if not personal_url:
+                raise DeliveryError(
+                    "PUBLIC_BASE_URL and DingTalk SSO are required for personal report delivery"
+                )
         if config.get("sendGroupImages") and not urls.get("imageUrl"):
             raise DeliveryError("PUBLIC_BASE_URL and PUBLIC_LINK_SECRET are required for image delivery")
         markdown = self._markdown(report, preview=preview)
@@ -293,9 +345,18 @@ class DeliveryService:
                     "text": markdown,
                 }
                 msg_key = "sampleMarkdown"
-                if urls.get("reportUrl"):
+                action_url = str(urls.get("reportUrl") or "")
+                action_title = "查看团队周报"
+                if target_type == "personal":
+                    action_url = personal_url
+                    action_title = "查看我的个人周报"
+                    if urls.get("reportUrl"):
+                        msg_param["text"] = (
+                            f"{markdown}\n\n[查看团队周报详情]({urls['reportUrl']})"
+                        )
+                if action_url:
                     msg_key = "sampleActionCard"
-                    msg_param.update({"singleTitle": "查看周报", "singleURL": urls["reportUrl"]})
+                    msg_param.update({"singleTitle": action_title, "singleURL": action_url})
                 if target_type == "group":
                     card_result = self.robot.send_group(
                         open_conversation_id=conversation_id,
@@ -317,7 +378,13 @@ class DeliveryService:
                     msg_key=msg_key,
                     result=card_result,
                     idempotency_key=card_key,
-                    snapshot={"phase": phase, "reportUrl": urls.get("reportUrl")},
+                    snapshot={
+                        "phase": phase,
+                        "reportUrl": urls.get("reportUrl"),
+                        "personalReportUrl": personal_url if target_type == "personal" else "",
+                        "actionTitle": action_title if action_url else "",
+                        "actionUrl": action_url,
+                    },
                 )
             results.append({"target": name, "messageType": "card", **card_result})
             sent += 1 if card_result.get("sent") else 0

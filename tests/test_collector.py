@@ -38,14 +38,21 @@ class CollectorTests(unittest.TestCase):
         )
         self.spec = {
             "tableId": "table-1", "tableName": "测试表", "category": "重点项目",
+            "categoryKey": "key_project", "categoryOrder": 40,
+            "subcategoryFields": ["类型"],
             "titleFields": ["事项"], "statusFields": ["状态"],
             "productManagerFields": ["产品经理"], "projectView": True,
+            "assigneeFields": [
+                {"fields": ["产品经理"], "role": "产品经理"},
+                {"fields": ["项目负责人"], "role": "项目负责人"},
+            ],
         }
         self.fields = [
             {"fieldId": "f1", "fieldName": "事项"},
             {"fieldId": "f2", "fieldName": "状态"},
             {"fieldId": "f3", "fieldName": "产品经理"},
             {"fieldId": "f4", "fieldName": "项目负责人"},
+            {"fieldId": "f5", "fieldName": "类型"},
         ]
 
     def tearDown(self) -> None:
@@ -60,6 +67,7 @@ class CollectorTests(unittest.TestCase):
                     "f1": "研发项目", "f2": status,
                     "f3": [{"userId": "u-product"}],
                     "f4": [{"userId": "u-project"}],
+                    "f5": "交付实施",
                 },
             }],
         )
@@ -75,6 +83,16 @@ class CollectorTests(unittest.TestCase):
         row = self.db.fetch_one("SELECT * FROM source_record WHERE record_id='record-1'")
         self.assertEqual(["产品甲"], json.loads(row["product_manager_names_json"]))
         self.assertEqual(["项目乙"], json.loads(row["project_manager_names_json"]))
+        self.assertEqual("key_project", row["category_key"])
+        self.assertEqual(40, row["category_order"])
+        self.assertEqual("交付实施", row["subcategory"])
+        self.assertEqual(
+            [
+                {"userId": "u-product", "name": "产品甲", "role": "产品经理"},
+                {"userId": "u-project", "name": "项目乙", "role": "项目负责人"},
+            ],
+            json.loads(row["assignees_json"]),
+        )
         self.assertIn("状态：风险", row["risk_text"])
 
     def test_initial_import_uses_source_timestamp_instead_of_current_week(self) -> None:
@@ -98,6 +116,19 @@ class CollectorTests(unittest.TestCase):
         row = self.db.fetch_one("SELECT * FROM source_record WHERE record_id='record-1'")
         self.assertEqual(["u-product"], json.loads(row["product_manager_user_ids_json"]))
         self.assertEqual(["产品甲"], json.loads(row["product_manager_names_json"]))
+
+    def test_project_view_roster_fallback_keeps_the_matching_person_name(self) -> None:
+        self.collector.config_service.update(
+            {"projectManagerRoster": [{"userId": "u-product", "name": "产品甲"}]}
+        )
+        result = self.result()
+        result.records[0]["cells"]["f4"] = []
+        self.collector._store_table(
+            self.spec, result, seen_at="2026-08-13T10:00:00+08:00"
+        )
+        row = self.db.fetch_one("SELECT * FROM source_record WHERE record_id='record-1'")
+        self.assertEqual(["u-product"], json.loads(row["project_manager_user_ids_json"]))
+        self.assertEqual(["产品甲"], json.loads(row["project_manager_names_json"]))
 
 
 if __name__ == "__main__":

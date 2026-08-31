@@ -37,6 +37,14 @@ def _extract_json(text: str) -> dict[str, Any]:
     if not isinstance(value, dict):
         raise AISummaryError("AI JSON must be an object")
     result = {key: str(value.get(key) or "").strip() for key in SECTION_KEYS}
+    raw_digests = value.get("categoryDigests")
+    result["categoryDigests"] = {
+        str(key): "\n".join(str(item or "") for item in digest).strip()
+        if isinstance(digest, list)
+        else str(digest or "").strip()
+        for key, digest in (raw_digests.items() if isinstance(raw_digests, dict) else [])
+        if str(key).strip() and (isinstance(digest, list) or str(digest or "").strip())
+    }
     if not result["executiveSummary"]:
         raise AISummaryError("AI summary is missing executiveSummary")
     return result
@@ -71,7 +79,7 @@ class AISummaryClient:
         items: list[dict[str, Any]],
         fallback: dict[str, str],
         project_baseline: list[dict[str, Any]] | None = None,
-    ) -> dict[str, str]:
+    ) -> dict[str, Any]:
         model_config = self._model_config()
         if not all(model_config.get(key) for key in ("apiBase", "apiKey", "model")):
             raise AISummaryError("AI model is not configured")
@@ -93,7 +101,9 @@ class AISummaryClient:
         facts = [
             {
                 "id": item.get("id"),
+                "categoryKey": item.get("categoryKey"),
                 "category": item.get("category"),
+                "subcategory": item.get("subcategory"),
                 "title": clipped(item.get("title")),
                 "status": clipped(item.get("status")),
                 "priority": clipped(item.get("priority")),
@@ -112,7 +122,7 @@ class AISummaryClient:
             for item in prioritized
         ]
         prompt = {
-            "task": "基于事实生成产品经理、项目经理可用的团队周报，只能归纳，不得新增事实或数字。",
+            "task": "基于按多维表业务分类的事实生成团队周报管理摘要，只能归纳，不得新增事实或数字。",
             "window": window,
             "metrics": metrics,
             "facts": facts,
@@ -131,10 +141,20 @@ class AISummaryClient:
                 if isinstance(item, dict) and item.get("visible") is not False
             ][:100],
             "factSelection": {"total": len(items), "sentToAI": len(facts), "prioritizedRisksFirst": True},
-            "output": {key: "string" for key in SECTION_KEYS},
+            "output": {
+                **{key: "string" for key in SECTION_KEYS},
+                "categoryDigests": {
+                    "<categoryKey>": "2-5 条换行分隔的管理摘要，不要输出逐条原文"
+                },
+            },
             "rules": [
                 "输出单个 JSON 对象，不使用 Markdown 代码块",
                 "产品亮点与项目亮点分开",
+                "categoryDigests 必须以 facts 中的 categoryKey 为键，每类只写 2-5 条",
+                "合并同客户、同项目或同主题的重复填报，去掉过程性冗语和无关背景",
+                "分类摘要优先表达已取得成果、关键变化、下一步和阻塞，每条尽量不超过 80 字",
+                "重点项目不逐条罗列正常项目；应归纳阶段成果，再单列风险、延期、暂停和缺少进展的情况",
+                "不要在本周进展摘要中重复罗列分类数量，应给出业务成果、关键变化和管理关注点",
                 "风险必须保留事项名称、状态或期限依据",
                 "没有事实时写暂无，不得猜测",
                 "不评价个人绩效，不生成排名",
@@ -158,7 +178,7 @@ class AISummaryClient:
                         },
                         {"role": "user", "content": json.dumps(prompt, ensure_ascii=False)},
                     ],
-                    max_tokens=3200,
+                    max_tokens=4200,
                     temperature=0.2,
                 ),
                 timeout=max(self.settings.http_timeout_seconds, 60),

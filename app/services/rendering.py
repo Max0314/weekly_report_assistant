@@ -63,6 +63,7 @@ def report_html(report: dict[str, Any], *, interactive: bool = False) -> str:
     metrics = report.get("metrics") or {}
     window = report.get("window") or {}
     sources = report.get("sources") or []
+    category_sections = sections.get("categorySections") or ReportService._category_sections(sources)
     category_cards = "".join(
         f'<div class="metric"><span>{html.escape(str(name))}</span><strong>{int(count or 0)}</strong></div>'
         for name, count in (metrics.get("byCategory") or {}).items()
@@ -72,10 +73,19 @@ def report_html(report: dict[str, Any], *, interactive: bool = False) -> str:
         f'<td class="fact-category" data-label="类别">{html.escape(str(item.get("category") or "-"))}</td>'
         f'<td class="fact-title" data-label="事项">{html.escape(str(item.get("title") or "-"))}</td>'
         f'<td class="fact-status" data-label="状态">{html.escape(str(item.get("status") or "-"))}</td>'
-        f'<td data-label="负责人">{html.escape("、".join(item.get("productManagerNames") or item.get("projectManagerNames") or []) or "-")}</td>'
+        f'<td data-label="负责人">{html.escape("、".join(dict.fromkeys(str(entry.get("name") or entry.get("userId") or "") for entry in item.get("assignees") or [] if isinstance(entry, dict))) or "-")}</td>'
         f'<td data-label="截止">{html.escape(str(item.get("dueAt") or "-").split("T")[0])}</td>'
         "</tr>"
         for item in sources[:80]
+    )
+    category_section_cards = "".join(
+        '<article class="card category-card">'
+        f'<div class="category-heading"><h2>{html.escape(str(section.get("label") or "未分类"))}</h2>'
+        f'<span>{int(section.get("itemCount") or 0)} 项</span></div>'
+        f'{_section_html(section.get("content"))}'
+        '</article>'
+        for section in category_sections
+        if isinstance(section, dict)
     )
     interactive_actions = (
         '<div class="hero-actions"><span class="readonly-pill">只读浏览</span>'
@@ -107,6 +117,10 @@ def report_html(report: dict[str, Any], *, interactive: bool = False) -> str:
 .lead p{{margin:0}} .lead p+p{{margin-top:8px}}
 .grid{{display:grid;grid-template-columns:1fr 1fr;gap:20px;margin-top:24px;align-items:start}} .card{{padding:26px 30px}}
 .grid .card:last-child{{grid-column:1/-1}}
+.category-grid{{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:20px;margin-top:24px;align-items:start}}
+.category-heading{{display:flex;align-items:center;justify-content:space-between;gap:14px;margin-bottom:16px}}
+.category-heading h2{{margin:0}}
+.category-heading span{{display:inline-flex;padding:5px 9px;color:#315a9e;border-radius:999px;background:#eef4ff;font-size:12px;font-weight:750}}
 .card h2{{font-size:25px;margin:0 0 16px;color:#173b68}}
 .section-list{{list-style:none;counter-reset:section-item;padding:0;margin:0}}
 .section-list li{{counter-increment:section-item;display:grid;grid-template-columns:28px minmax(0,1fr);gap:10px;font-size:18px;line-height:1.65;margin:12px 0}}
@@ -138,6 +152,7 @@ th:nth-child(1){{width:18%}} th:nth-child(3){{width:11%}} th:nth-child(4){{width
   .metrics{{grid-template-columns:repeat(3,1fr);gap:8px;margin:14px 0}}
   .metric{{padding:12px;border-radius:14px}} .metric span{{font-size:12px;line-height:1.35}} .metric strong{{font-size:21px}}
   .grid{{grid-template-columns:1fr;gap:12px;margin-top:14px}} .grid .card:last-child{{grid-column:auto}}
+  .category-grid{{grid-template-columns:1fr;gap:12px;margin-top:14px}}
   .card{{padding:18px;border-radius:15px}} .card h2{{font-size:20px;margin-bottom:12px}}
   .section-list li{{grid-template-columns:24px minmax(0,1fr);gap:8px;font-size:15.5px;line-height:1.7;margin:10px 0}}
   .section-list li::before{{width:21px;height:21px;margin-top:3px;font-size:11px}}
@@ -168,9 +183,8 @@ th:nth-child(1){{width:18%}} th:nth-child(3){{width:11%}} th:nth-child(4){{width
 </section>
 <section class="lead">{_summary_html(sections.get('executiveSummary'))}</section>
 <section class="metrics">{category_cards}</section>
+<section class="category-grid">{category_section_cards or '<article class="card"><p class="empty">本周期暂无分类事项</p></article>'}</section>
 <section class="grid">
-<article class="card"><h2>产品管理进展</h2>{_section_html(sections.get('productHighlights'))}</article>
-<article class="card"><h2>项目管理进展</h2>{_section_html(sections.get('projectHighlights'))}</article>
 <article class="card risk"><h2>风险与待跟进</h2>{_section_html(sections.get('risks'))}</article>
 <article class="card"><h2>下周计划</h2>{_section_html(sections.get('nextPlans'))}</article>
 <article class="card"><h2>需协调与支持</h2>{_section_html(sections.get('supportNeeds'))}</article>
@@ -255,6 +269,12 @@ class ReportRenderer:
             "reportUrl": f"{base}/public/reports/{int(report_id)}?{query}",
             "imageUrl": f"{base}/api/public/reports/{int(report_id)}/image?{query}",
         }
+
+    def personal_report_url(self, report_id: int) -> str:
+        base = self.settings.public_base_url.strip().rstrip("/")
+        if not base or not self.settings.dingtalk_sso_configured:
+            return ""
+        return f"{base}/#/personal-reports?reportId={int(report_id)}"
 
 
 report_renderer = ReportRenderer()

@@ -312,6 +312,69 @@ class DirectoryService:
         rows = self.db.fetch_all("SELECT * FROM employee_cache WHERE is_active=1 AND union_id<>''")
         return {str(item.get("union_id") or ""): item for item in rows if item.get("union_id")}
 
+    @staticmethod
+    def _person_summary(item: dict[str, Any]) -> dict[str, Any]:
+        return {
+            "userId": str(item.get("user_id") or ""),
+            "name": str(item.get("employee_name") or ""),
+            "title": str(item.get("title") or ""),
+            "department": str(item.get("department_name") or ""),
+            "bizGroup": str(item.get("biz_group_name") or ""),
+            "isDepartmentLeader": bool(item.get("is_department_leader")),
+            "isBizGroupLeader": bool(item.get("is_biz_group_leader")),
+            "isCompanyLeader": bool(item.get("is_company_leader")),
+        }
+
+    def accessible_people(self, viewer_user_id: str, *, full_scope: bool = False) -> list[dict[str, Any]]:
+        viewer_id = str(viewer_user_id or "").strip()
+        viewer = self.db.fetch_one(
+            "SELECT * FROM employee_cache WHERE is_active=1 AND user_id=?",
+            (viewer_id,),
+        )
+        if not viewer:
+            return []
+        if full_scope or bool(viewer.get("is_company_leader")):
+            rows = self.db.fetch_all(
+                """
+                SELECT * FROM employee_cache
+                WHERE is_active=1 AND user_id<>''
+                ORDER BY employee_name, department_name
+                """
+            )
+            return [self._person_summary(item) for item in rows]
+        leader_relations = self.db.fetch_all(
+            """
+            SELECT organization_key FROM employee_org_relation_cache
+            WHERE employee_key=? AND is_leader=1
+            """,
+            (str(viewer.get("employee_key") or ""),),
+        )
+        organization_keys = [str(item.get("organization_key") or "") for item in leader_relations]
+        if organization_keys:
+            placeholders = ",".join("?" for _ in organization_keys)
+            rows = self.db.fetch_all(
+                f"""
+                SELECT DISTINCT e.* FROM employee_cache e
+                JOIN employee_org_relation_cache r ON r.employee_key=e.employee_key
+                WHERE e.is_active=1 AND e.user_id<>'' AND r.is_primary=1
+                  AND r.organization_key IN ({placeholders})
+                ORDER BY e.employee_name, e.department_name
+                """,
+                tuple(organization_keys),
+            )
+        else:
+            rows = []
+        if not any(str(item.get("user_id") or "") == viewer_id for item in rows):
+            rows.append(viewer)
+        return [self._person_summary(item) for item in rows]
+
+    def can_view_person(self, viewer_user_id: str, target_user_id: str, *, full_scope: bool = False) -> bool:
+        target = str(target_user_id or "").strip()
+        return any(
+            str(item.get("userId") or "") == target
+            for item in self.accessible_people(viewer_user_id, full_scope=full_scope)
+        )
+
     def cache_status(self) -> dict[str, Any]:
         row = self.db.fetch_one(
             """

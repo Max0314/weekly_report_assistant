@@ -136,6 +136,25 @@ class DirectoryServiceTests(unittest.TestCase):
         self.assertEqual(0, relation["is_primary"])
         self.assertEqual(1, relation["is_leader"])
 
+    def test_personal_report_scope_is_self_or_led_organization(self) -> None:
+        self.service.sync()
+        self.db.execute(
+            """
+            INSERT INTO employee_cache(
+              employee_key,user_id,employee_name,title,department_name,is_active,refreshed_at
+            ) VALUES ('e-3','u-3','普通丙','工程师','支持部',1,'2026-08-14T09:00:00+08:00')
+            """
+        )
+        leader_people = self.service.accessible_people("u-1")
+        self.assertEqual({"u-1", "u-2"}, {item["userId"] for item in leader_people})
+        self.assertTrue(self.service.can_view_person("u-1", "u-2"))
+        self.assertFalse(self.service.can_view_person("u-1", "u-3"))
+        self.assertEqual(["u-3"], [item["userId"] for item in self.service.accessible_people("u-3")])
+        self.assertEqual(
+            {"u-1", "u-2", "u-3"},
+            {item["userId"] for item in self.service.accessible_people("u-3", full_scope=True)},
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <meta name="theme-color" content="#f6f8fb">
   <title>产品与项目经理周报助手</title>
-  <link rel="stylesheet" href="static/styles.css?v=20260828d">
+  <link rel="stylesheet" href="static/styles.css?v=20260831b">
 </head>
 <body>
   <div class="app-shell">
@@ -48,6 +48,7 @@
         <a href="#/teambition" class="nav-item" data-route="teambition"><span class="nav-icon">TB</span><span>TB 工作看板</span></a>
         <p class="nav-group-label">周报管理</p>
         <a href="#/reports" class="nav-item" data-route="reports"><span class="nav-icon">▤</span><span>周报展示</span></a>
+        <a href="#/personal-reports" class="nav-item" data-route="personal-reports"><span class="nav-icon">人</span><span>个人周报</span></a>
         <a href="#/report-config" class="nav-item" data-route="report-config"><span class="nav-icon">◇</span><span>周报配置</span></a>
         <p class="nav-group-label">系统设置</p>
         <a href="#/model-config" class="nav-item" data-route="model-config"><span class="nav-icon">✦</span><span>模型配置</span></a>
@@ -93,8 +94,8 @@
             <section class="panel workflow-panel">
               <div class="section-head"><div><p class="eyebrow">PROCESS</p><h2>标准流程</h2></div></div>
               <ol class="process-list">
-                <li><span>1</span><div><strong>同步事实</strong><p>读取 8 张 AI 表与 TB 任务并固化快照。</p></div></li>
-                <li><span>2</span><div><strong>生成与修订</strong><p>程序计算指标，编辑六个正文区块。</p></div></li>
+                <li><span>1</span><div><strong>同步事实</strong><p>读取 9 张 AI 表与 TB 任务并固化快照。</p></div></li>
+                <li><span>2</span><div><strong>生成与修订</strong><p>程序计算指标，按多维表业务分类生成汇总。</p></div></li>
                 <li><span>3</span><div><strong>预览与确认</strong><p>测试目标先看，确认人审核后正式发送。</p></div></li>
               </ol>
             </section>
@@ -178,6 +179,29 @@
             <div id="reportFilterSummary" class="list-summary">等待读取周报。</div>
             <div id="reports" class="report-list"><p class="muted">暂无数据</p></div>
           </section>
+        </div>
+      </section>
+
+      <section class="page" data-page="personal-reports" hidden>
+        <div class="page-width">
+          <section class="page-hero compact-hero">
+            <div><p class="eyebrow">PERSONAL WEEKLY</p><h2>个人周报</h2><p>默认查看本人；周报确认人和组织负责人可点击查看授权范围内的成员。</p></div>
+            <div class="actions"><select id="personalReportPeriod" aria-label="选择周报周期"><option value="">暂无综合周报</option></select><button id="refreshPersonalReport" class="secondary" type="button">刷新</button></div>
+          </section>
+          <div class="personal-layout">
+            <aside class="panel personal-members-panel">
+              <div class="section-head"><div><p class="eyebrow">MEMBERS</p><h2>对应成员</h2><p id="personalMemberHint">登录后显示本人和可查看成员。</p></div></div>
+              <div id="personalMembers" class="personal-member-list"><p class="muted">等待读取。</p></div>
+            </aside>
+            <div class="personal-report-column">
+              <section id="personalHero" class="personal-hero"><div><span>MY WEEKLY REPORT</span><h2>个人周报</h2><p>请选择一个已生成的综合周报。</p></div></section>
+              <div id="personalStats" class="metric-grid personal-metrics">
+                <article class="metric-card"><span>关联事项</span><strong>—</strong><small>等待读取</small></article>
+              </div>
+              <section class="panel"><div class="section-head"><div><p class="eyebrow">SUMMARY</p><h2>本周总结</h2></div></div><p id="personalSummary" class="personal-summary">等待读取个人周报。</p></section>
+              <div id="personalCategories" class="personal-category-list"><div class="empty-state"><strong>暂无个人周报</strong><p>请先生成综合周报。</p></div></div>
+            </div>
+          </div>
         </div>
       </section>
 
@@ -330,16 +354,17 @@
     <div class="dialog-head"><div><p class="eyebrow">REPORT DETAIL</p><h2 id="reportDialogTitle">周报详情</h2><p id="reportDialogMeta"></p></div><button id="closeReportDialog" class="icon-button" type="button" aria-label="关闭">×</button></div>
     <div class="section-editor-grid">
       <label>管理摘要<textarea id="section-executiveSummary"></textarea></label>
-      <label>产品工作亮点<textarea id="section-productHighlights"></textarea></label>
-      <label>项目工作亮点<textarea id="section-projectHighlights"></textarea></label>
+      <label hidden>产品工作亮点（兼容字段）<textarea id="section-productHighlights"></textarea></label>
+      <label hidden>项目工作亮点（兼容字段）<textarea id="section-projectHighlights"></textarea></label>
       <label>风险与问题<textarea id="section-risks"></textarea></label>
       <label>下周计划<textarea id="section-nextPlans"></textarea></label>
       <label>需协调支持<textarea id="section-supportNeeds"></textarea></label>
     </div>
+    <section class="dialog-category-section"><div><strong>按业务条目分类</strong><span>分类正文根据本版事实快照自动生成，避免编辑后与统计不一致。</span></div><div id="reportCategorySections" class="dialog-category-list"></div></section>
     <div class="dialog-actions"><div class="dialog-action-copy"><strong>编辑周报正文</strong><span id="reportDirtyHint">修改后保存会清除旧图片和审核状态。</span></div><div class="actions"><button id="cancelSections" class="secondary" type="button">取消</button><button id="saveSections" type="button" disabled>保存修改</button></div></div>
     <details id="reportSourceDetails" class="source-details"><summary>查看本版纳入的事实清单</summary><div id="reportSources" class="source-list"></div></details>
   </dialog>
 
-  <script src="static/app.js?v=20260828d"></script>
+  <script src="static/app.js?v=20260831b"></script>
 </body>
 </html>

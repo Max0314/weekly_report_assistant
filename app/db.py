@@ -91,7 +91,10 @@ CREATE TABLE IF NOT EXISTS source_record (
     table_id TEXT NOT NULL,
     table_name TEXT NOT NULL,
     record_id TEXT NOT NULL,
+    category_key TEXT NOT NULL DEFAULT '',
+    category_order INTEGER NOT NULL DEFAULT 999,
     category TEXT NOT NULL DEFAULT '',
+    subcategory TEXT NOT NULL DEFAULT '',
     title TEXT NOT NULL DEFAULT '',
     status TEXT NOT NULL DEFAULT '',
     priority TEXT NOT NULL DEFAULT '',
@@ -102,6 +105,7 @@ CREATE TABLE IF NOT EXISTS source_record (
     project_manager_user_ids_json TEXT NOT NULL DEFAULT '[]',
     product_manager_names_json TEXT NOT NULL DEFAULT '[]',
     project_manager_names_json TEXT NOT NULL DEFAULT '[]',
+    assignees_json TEXT NOT NULL DEFAULT '[]',
     event_at TEXT NOT NULL DEFAULT '',
     due_at TEXT NOT NULL DEFAULT '',
     source_created_at TEXT NOT NULL DEFAULT '',
@@ -305,6 +309,23 @@ class Database:
         for column, definition in additions.items():
             if column not in weekly_columns:
                 connection.execute(f"ALTER TABLE weekly_report ADD COLUMN {column} {definition}")
+
+        source_columns = {
+            str(row["name"])
+            for row in connection.execute("PRAGMA table_info(source_record)").fetchall()
+        }
+        source_additions = {
+            "category_key": "TEXT NOT NULL DEFAULT ''",
+            "category_order": "INTEGER NOT NULL DEFAULT 999",
+            "subcategory": "TEXT NOT NULL DEFAULT ''",
+            "assignees_json": "TEXT NOT NULL DEFAULT '[]'",
+        }
+        for column, definition in source_additions.items():
+            if column not in source_columns:
+                connection.execute(f"ALTER TABLE source_record ADD COLUMN {column} {definition}")
+        connection.execute(
+            "CREATE INDEX IF NOT EXISTS idx_source_record_category ON source_record(category_order, category_key, is_deleted)"
+        )
 
         employee_columns = {
             str(row["name"])

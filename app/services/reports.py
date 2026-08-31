@@ -6,7 +6,7 @@ from datetime import datetime, timedelta
 from typing import Any
 
 from ..db import Database, db
-from ..source_catalog import SOURCE_TABLES, TEAMBITION_TABLE_ID
+from ..source_catalog import SOURCE_TABLES, SOURCE_TABLE_BY_ID, TEAMBITION_TABLE_ID
 from ..time_utils import SHANGHAI, from_db, now_local, to_db, weekly_window
 from .ai_summary import AISummaryClient, AISummaryError, ai_summary_client
 from .workflow_config import WorkflowConfigService, workflow_config_service
@@ -33,6 +33,24 @@ def _json(value: Any, default: Any) -> Any:
 def _lines(values: list[str], *, limit: int = 12) -> str:
     cleaned = [str(item or "").strip() for item in values if str(item or "").strip()]
     return "\n".join(f"- {item}" for item in cleaned[:limit]) or "- 暂无"
+
+
+def _compact(value: Any, limit: int = 120) -> str:
+    text = re.sub(r"\s+", " ", str(value or "")).strip(" ；;")
+    return text if len(text) <= limit else f"{text[: limit - 1].rstrip()}…"
+
+
+def _normalized_digest(value: Any, *, limit: int = 5) -> str:
+    if isinstance(value, list):
+        raw_lines = [str(item or "") for item in value]
+    else:
+        raw_lines = str(value or "").splitlines()
+    lines = [
+        _compact(re.sub(r"^(?:[-•*]|\d{1,2}[.、])\s*", "", line.strip()), 150)
+        for line in raw_lines
+        if line.strip()
+    ]
+    return _lines(lines, limit=limit)
 
 
 def _is_closed(status: str) -> bool:
@@ -78,12 +96,15 @@ class ReportService:
 
     @staticmethod
     def _format_source(row: dict[str, Any]) -> dict[str, Any]:
-        return {
+        item = {
             "id": int(row.get("id") or 0),
             "tableId": str(row.get("table_id") or ""),
             "tableName": str(row.get("table_name") or ""),
             "recordId": str(row.get("record_id") or ""),
+            "categoryKey": str(row.get("category_key") or ""),
+            "categoryOrder": int(row.get("category_order") or 999),
             "category": str(row.get("category") or ""),
+            "subcategory": str(row.get("subcategory") or ""),
             "title": str(row.get("title") or ""),
             "status": str(row.get("status") or ""),
             "priority": str(row.get("priority") or ""),
@@ -94,11 +115,54 @@ class ReportService:
             "projectManagerUserIds": _json(row.get("project_manager_user_ids_json"), []),
             "productManagerNames": _json(row.get("product_manager_names_json"), []),
             "projectManagerNames": _json(row.get("project_manager_names_json"), []),
+            "assignees": _json(row.get("assignees_json"), []),
             "eventAt": str(row.get("event_at") or ""),
             "dueAt": str(row.get("due_at") or ""),
             "sourceUpdatedAt": str(row.get("source_updated_at") or ""),
             "changedAt": str(row.get("changed_at") or ""),
         }
+        return ReportService._hydrate_source(item)
+
+    @staticmethod
+    def _hydrate_source(value: dict[str, Any]) -> dict[str, Any]:
+        item = {**value}
+        table_id = str(item.get("tableId") or "")
+        spec = SOURCE_TABLE_BY_ID.get(table_id, {})
+        had_category_key = bool(item.get("categoryKey"))
+        if not had_category_key:
+            item["categoryKey"] = str(spec.get("categoryKey") or spec.get("key") or table_id or "uncategorized")
+            if spec.get("category"):
+                # Rows and historical snapshots created before category keys
+                # used broader labels. Bind those legacy facts to the current
+                # table taxonomy without rewriting their stored snapshot.
+                item["category"] = str(spec["category"])
+        if not item.get("categoryOrder") or int(item.get("categoryOrder") or 999) == 999:
+            item["categoryOrder"] = int(spec.get("categoryOrder") or (45 if table_id == TEAMBITION_TABLE_ID else 999))
+        if not item.get("category"):
+            item["category"] = str(spec.get("category") or item.get("tableName") or "未分类")
+        assignees = [entry for entry in item.get("assignees") or [] if isinstance(entry, dict)]
+        if not assignees:
+            seen: set[tuple[str, str]] = set()
+            for role, ids_key, names_key in (
+                ("产品经理", "productManagerUserIds", "productManagerNames"),
+                ("项目负责人", "projectManagerUserIds", "projectManagerNames"),
+            ):
+                user_ids = item.get(ids_key) or []
+                names = item.get(names_key) or []
+                for index, user_id in enumerate(user_ids):
+                    normalized = str(user_id or "").strip()
+                    if not normalized or (normalized, role) in seen:
+                        continue
+                    seen.add((normalized, role))
+                    assignees.append(
+                        {
+                            "userId": normalized,
+                            "name": str(names[index] if index < len(names) else normalized),
+                            "role": role,
+                        }
+                    )
+        item["assignees"] = assignees
+        return item
 
     def source_items(self, *, period_key: str = "", report_kind: str = "combined") -> tuple[dict[str, Any], list[dict[str, Any]]]:
         if report_kind not in REPORT_KINDS:
@@ -109,7 +173,11 @@ class ReportService:
         end_at = window["endAt"]
         due_end = end_at + timedelta(days=int(config["dueSoonDays"]))
         rows = self.db.fetch_all(
-            "SELECT * FROM source_record WHERE is_deleted=0 AND category<>'人员名单' ORDER BY table_name, title"
+            """
+            SELECT * FROM source_record
+            WHERE is_deleted=0 AND category<>'人员名单'
+            ORDER BY category_order, table_name, title
+            """
         )
         result: list[dict[str, Any]] = []
         for row in rows:
@@ -151,6 +219,7 @@ class ReportService:
     @staticmethod
     def _metrics(items: list[dict[str, Any]]) -> dict[str, Any]:
         by_category: dict[str, int] = {}
+        by_subcategory: dict[str, dict[str, int]] = {}
         by_status: dict[str, int] = {}
         managers: set[str] = set()
         overdue = 0
@@ -160,9 +229,21 @@ class ReportService:
             category = item.get("category") or "未分类"
             status = item.get("status") or "未标记"
             by_category[category] = by_category.get(category, 0) + 1
+            subcategory = str(item.get("subcategory") or "").strip()
+            if subcategory:
+                category_subcategories = by_subcategory.setdefault(category, {})
+                category_subcategories[subcategory] = category_subcategories.get(subcategory, 0) + 1
             by_status[status] = by_status.get(status, 0) + 1
-            managers.update(str(value) for value in item.get("productManagerNames") or [])
-            managers.update(str(value) for value in item.get("projectManagerNames") or [])
+            assignees = [entry for entry in item.get("assignees") or [] if isinstance(entry, dict)]
+            if assignees:
+                managers.update(
+                    str(entry.get("userId") or entry.get("name") or "").strip()
+                    for entry in assignees
+                    if str(entry.get("userId") or entry.get("name") or "").strip()
+                )
+            else:
+                managers.update(str(value) for value in item.get("productManagerNames") or [])
+                managers.update(str(value) for value in item.get("projectManagerNames") or [])
             overdue += 1 if item.get("overdue") else 0
             risk += 1 if item.get("riskText") else 0
             high_priority += 1 if item.get("priority") in {"高", "紧急"} else 0
@@ -173,8 +254,192 @@ class ReportService:
             "riskCount": risk,
             "highPriorityCount": high_priority,
             "byCategory": by_category,
+            "bySubcategory": by_subcategory,
             "byStatus": by_status,
         }
+
+    @staticmethod
+    def _category_digest(
+        key: str,
+        label: str,
+        category_items: list[dict[str, Any]],
+        by_status: dict[str, int],
+        by_subcategory: dict[str, int],
+    ) -> str:
+        if not category_items:
+            return "- 暂无填报。"
+
+        def count_text(values: dict[str, int], preferred: list[str] | None = None) -> str:
+            order = preferred or []
+            keys = [key for key in order if values.get(key)]
+            keys.extend(key for key in values if key not in keys and values.get(key))
+            return "、".join(f"{name} {values[name]} 项" for name in keys)
+
+        def item_text(item: dict[str, Any], progress_limit: int = 72) -> str:
+            title = _compact(item.get("title") or "未命名事项", 42)
+            progress = _compact(
+                item.get("progressText") or item.get("status") or "已纳入本周跟踪",
+                progress_limit,
+            )
+            return f"{title}：{progress}"
+
+        def representative_items(limit: int = 3) -> list[str]:
+            grouped: dict[str, list[dict[str, Any]]] = {}
+            for item in category_items:
+                title = str(item.get("title") or "未命名事项").strip()
+                group_key = re.sub(r"\s+", "", title).lower()
+                if key == "customer_visit":
+                    group_key = re.split(r"[（(]", group_key, maxsplit=1)[0]
+                grouped.setdefault(group_key, []).append(item)
+            ranked = sorted(
+                grouped.values(),
+                key=lambda group: (
+                    not any(item.get("riskText") or item.get("overdue") for item in group),
+                    not any(item.get("progressText") for item in group),
+                    -len(group),
+                ),
+            )
+            result: list[str] = []
+            for group in ranked[:limit]:
+                chosen = max(group, key=lambda item: len(str(item.get("progressText") or "")))
+                text = item_text(chosen)
+                if len(group) > 1:
+                    title, separator, progress = text.partition("：")
+                    text = f"{title}（{len(group)} 次）{separator}{progress}"
+                result.append(text)
+            return result
+
+        lines: list[str] = []
+        item_count = len(category_items)
+        if key == "key_project":
+            lines.append(
+                f"项目盘面共 {item_count} 项："
+                f"{count_text(by_status, ['正常', '风险', '延期', '暂停', '未标记'])}。"
+            )
+            abnormal = [
+                item for item in category_items
+                if str(item.get("status") or "") in {"风险", "延期"} or item.get("riskText") or item.get("overdue")
+            ]
+            if abnormal:
+                names = "、".join(_compact(item.get("title") or "未命名项目", 28) for item in abnormal[:5])
+                suffix = f"等 {len(abnormal)} 项" if len(abnormal) > 5 else ""
+                lines.append(f"风险/延期聚焦：{names}{suffix}，具体依据见“风险聚焦”。")
+            paused = [item for item in category_items if "暂停" in str(item.get("status") or "")]
+            if paused:
+                names = "、".join(_compact(item.get("title") or "未命名项目", 30) for item in paused[:4])
+                lines.append(f"暂停项目 {len(paused)} 项：{names}，待需求或送测节点明确后重启。")
+            missing = sum(1 for item in category_items if not str(item.get("progressText") or "").strip())
+            if missing:
+                lines.append(f"有 {missing} 项未填写本周进展，建议正式发送前补齐。")
+            normal = [
+                item for item in category_items
+                if str(item.get("status") or "") == "正常" and str(item.get("progressText") or "").strip()
+            ]
+            if normal:
+                highlights = "；".join(item_text(item, 48) for item in normal[:2])
+                lines.append(f"推进亮点：{highlights}。")
+        elif key == "support_todo":
+            lines.append(
+                f"支持及待办共 {item_count} 项："
+                f"{count_text(by_status, ['待处理', '进行中', '已完成'])}。"
+            )
+            high_pending = [
+                item for item in category_items
+                if item.get("priority") in {"高", "紧急"} and not _is_closed(str(item.get("status") or ""))
+            ]
+            if high_pending:
+                lines.append("高优先级未完成：" + "；".join(item_text(item, 60) for item in high_pending[:3]) + "。")
+            completed = [item for item in category_items if _is_closed(str(item.get("status") or ""))]
+            if completed:
+                lines.append(f"已完成 {len(completed)} 项：" + "、".join(_compact(item.get("title"), 44) for item in completed[:3]) + "。")
+            unnamed = sum(1 for item in category_items if not str(item.get("title") or "").strip())
+            if unnamed:
+                lines.append(f"数据质量：{unnamed} 条待办未填写事项描述。")
+        else:
+            if by_subcategory:
+                lines.append(f"本周共 {item_count} 项：{count_text(by_subcategory)}。")
+            elif by_status:
+                lines.append(
+                    f"本周共 {item_count} 项："
+                    f"{count_text(by_status, ['进行中', '已完成', '已结束', '待处理'])}。"
+                )
+            else:
+                lines.append(f"本周共 {item_count} 项。")
+            representatives = representative_items(3)
+            if representatives:
+                lines.append("重点进展：" + "；".join(representatives) + "。")
+            remaining = item_count - min(item_count, 3)
+            if remaining > 0:
+                lines.append(f"其余 {remaining} 项已纳入详情页，消息中不再逐条展开。")
+        return _lines(lines, limit=5)
+
+    @staticmethod
+    def _category_sections(
+        items: list[dict[str, Any]],
+        *,
+        include_empty: bool = False,
+        report_kind: str = "combined",
+    ) -> list[dict[str, Any]]:
+        grouped: dict[tuple[int, str, str], list[dict[str, Any]]] = {}
+        if include_empty:
+            for source in SOURCE_TABLES:
+                if source.get("roster") or source.get("archive"):
+                    continue
+                is_project = bool(source.get("projectView"))
+                if report_kind == "product" and is_project:
+                    continue
+                if report_kind == "project" and not is_project:
+                    continue
+                order = int(source.get("categoryOrder") or 999)
+                key = str(source.get("categoryKey") or source.get("tableId") or "uncategorized")
+                label = str(source.get("category") or source.get("tableName") or "未分类")
+                grouped.setdefault((order, key, label), [])
+        for item in items:
+            order = int(item.get("categoryOrder") or 999)
+            key = str(item.get("categoryKey") or item.get("tableId") or "uncategorized")
+            label = str(item.get("category") or "未分类")
+            grouped.setdefault((order, key, label), []).append(item)
+        result: list[dict[str, Any]] = []
+        for (order, key, label), category_items in sorted(grouped.items()):
+            lines: list[str] = []
+            by_status: dict[str, int] = {}
+            by_subcategory: dict[str, int] = {}
+            for item in category_items:
+                status = str(item.get("status") or "未标记")
+                by_status[status] = by_status.get(status, 0) + 1
+                subcategory = str(item.get("subcategory") or "").strip()
+                if subcategory:
+                    by_subcategory[subcategory] = by_subcategory.get(subcategory, 0) + 1
+                assignees = item.get("assignees") or []
+                owner_text = "、".join(
+                    dict.fromkeys(str(entry.get("name") or entry.get("userId") or "") for entry in assignees if isinstance(entry, dict))
+                )
+                details = str(item.get("progressText") or item.get("status") or "已纳入本周跟踪")
+                prefix = f"【{subcategory}】" if subcategory else ""
+                suffix = f"（{owner_text}）" if owner_text else ""
+                lines.append(f"{prefix}{item.get('title') or '未命名事项'}：{details}{suffix}")
+            result.append(
+                {
+                    "key": key,
+                    "label": label,
+                    "order": order,
+                    "itemCount": len(category_items),
+                    "riskCount": sum(1 for item in category_items if item.get("riskText")),
+                    "overdueCount": sum(1 for item in category_items if item.get("overdue")),
+                    "highPriorityCount": sum(1 for item in category_items if item.get("priority") in {"高", "紧急"}),
+                    "byStatus": by_status,
+                    "bySubcategory": by_subcategory,
+                    "content": _lines(lines, limit=50),
+                    "digest": ReportService._category_digest(
+                        key,
+                        label,
+                        category_items,
+                        by_status,
+                        by_subcategory,
+                    ),
+                }
+            )
+        return result
 
     def _manager_coverage(
         self,
@@ -303,7 +568,12 @@ class ReportService:
         return self._manager_coverage(window=window, items=items, report_kind=report_kind)
 
     @staticmethod
-    def _draft_sections(items: list[dict[str, Any]], metrics: dict[str, Any]) -> dict[str, str]:
+    def _draft_sections(
+        items: list[dict[str, Any]],
+        metrics: dict[str, Any],
+        *,
+        report_kind: str,
+    ) -> dict[str, Any]:
         product_lines: list[str] = []
         project_lines: list[str] = []
         risk_lines: list[str] = []
@@ -326,12 +596,18 @@ class ReportService:
             if item.get("priority") in {"高", "紧急"} and not _is_closed(str(item.get("status") or "")):
                 support_lines.append(f"{item.get('title') or '未命名事项'}：高优先级，当前状态 {item.get('status') or '未标记'}")
         summary = (
-            f"本周共纳入 {metrics['itemCount']} 项过程事项，涉及 {metrics['managerCount']} 名负责人；"
-            f"其中风险事项 {metrics['riskCount']} 项、逾期事项 {metrics['overdueCount']} 项、"
-            f"高优先级事项 {metrics['highPriorityCount']} 项。"
+            f"本周团队共推进 {metrics['itemCount']} 项工作，涉及 {metrics['managerCount']} 名负责人。"
+            f"当前需管理层关注风险 {metrics['riskCount']} 项、逾期 {metrics['overdueCount']} 项，"
+            f"另有高优先级事项 {metrics['highPriorityCount']} 项。"
+            "各分类已按成果、关键变化和待处理问题进行归并，完整明细保留在周报详情页。"
         )
         return {
             "executiveSummary": summary,
+            "categorySections": ReportService._category_sections(
+                items,
+                include_empty=True,
+                report_kind=report_kind,
+            ),
             "productHighlights": _lines(product_lines),
             "projectHighlights": _lines(project_lines),
             "risks": _lines(risk_lines),
@@ -356,7 +632,7 @@ class ReportService:
             "missingCount": coverage["missingCount"],
         }
         config = self.config_service.get()
-        fallback = self._draft_sections(items, metrics)
+        fallback = self._draft_sections(items, metrics, report_kind=report_kind)
         sections = fallback
         ai_status = "deterministic"
         ai_error = ""
@@ -374,6 +650,23 @@ class ReportService:
                     fallback=fallback,
                     project_baseline=config.get("projectBaseline") or [],
                 )
+                ai_category_digests = sections.pop("categoryDigests", {})
+                sections["categorySections"] = [
+                    {
+                        **category,
+                        "digest": _normalized_digest(
+                            ai_category_digests.get(str(category.get("key") or ""))
+                            or ai_category_digests.get(str(category.get("label") or ""))
+                        )
+                        if isinstance(ai_category_digests, dict)
+                        and (
+                            ai_category_digests.get(str(category.get("key") or ""))
+                            or ai_category_digests.get(str(category.get("label") or ""))
+                        )
+                        else category.get("digest"),
+                    }
+                    for category in fallback["categorySections"]
+                ]
                 ai_status = "success"
             except AISummaryError as exc:
                 ai_status = "fallback"
@@ -469,7 +762,7 @@ class ReportService:
             snapshot = _json(row.get("source_snapshot_json"), [])
             source_ids = result["sourceRecordIds"]
             if snapshot:
-                result["sources"] = snapshot
+                result["sources"] = [self._hydrate_source(item) for item in snapshot if isinstance(item, dict)]
                 result["sourceSnapshot"] = True
             elif source_ids:
                 placeholders = ",".join("?" for _ in source_ids)
@@ -482,7 +775,107 @@ class ReportService:
             else:
                 result["sources"] = []
                 result["sourceSnapshot"] = True
+            if not result["sections"].get("categorySections"):
+                result["sections"] = {
+                    **result["sections"],
+                    "categorySections": self._category_sections(
+                        result["sources"],
+                        include_empty=True,
+                        report_kind=str(result.get("reportKind") or "combined"),
+                    ),
+                }
         return result
+
+    def personal(self, report_id: int, *, user_id: str, name: str = "") -> dict[str, Any]:
+        report = self.get(report_id, include_sources=True)
+        if report.get("reportKind") != "combined":
+            raise ValueError("personal reports must be derived from a combined report")
+        normalized_user_id = str(user_id or "").strip()
+        if not normalized_user_id:
+            raise ValueError("personal report user is required")
+        personal_items: list[dict[str, Any]] = []
+        display_name = str(name or "").strip()
+        for source in report.get("sources") or []:
+            roles = [
+                str(entry.get("role") or "负责人")
+                for entry in source.get("assignees") or []
+                if isinstance(entry, dict) and str(entry.get("userId") or "").strip() == normalized_user_id
+            ]
+            if not roles:
+                continue
+            item = {**source, "roles": list(dict.fromkeys(roles))}
+            personal_items.append(item)
+            if not display_name:
+                matched = next(
+                    (
+                        str(entry.get("name") or "")
+                        for entry in source.get("assignees") or []
+                        if isinstance(entry, dict) and str(entry.get("userId") or "").strip() == normalized_user_id
+                    ),
+                    "",
+                )
+                display_name = matched or display_name
+        metrics = self._metrics(personal_items)
+        completed = sum(1 for item in personal_items if _is_closed(str(item.get("status") or "")))
+        metrics["completedCount"] = completed
+        metrics["inProgressCount"] = len(personal_items) - completed
+        role_counts: dict[str, int] = {}
+        for item in personal_items:
+            for role in item.get("roles") or []:
+                role_counts[role] = role_counts.get(role, 0) + 1
+        metrics["byRole"] = role_counts
+        summary = (
+            f"{display_name or normalized_user_id}本周共关联 {metrics['itemCount']} 项工作；"
+            f"已完成 {completed} 项、进行中或待处理 {metrics['inProgressCount']} 项，"
+            f"风险 {metrics['riskCount']} 项、逾期 {metrics['overdueCount']} 项、"
+            f"高优先级 {metrics['highPriorityCount']} 项。"
+        )
+        return {
+            "reportId": report["id"],
+            "periodKey": report["periodKey"],
+            "version": report["version"],
+            "window": report["window"],
+            "workflowState": report["workflowState"],
+            "person": {"userId": normalized_user_id, "name": display_name or normalized_user_id},
+            "summary": summary,
+            "metrics": metrics,
+            "categorySections": self._category_sections(personal_items),
+            "items": personal_items,
+        }
+
+    def personal_members(self, report_id: int) -> list[dict[str, Any]]:
+        report = self.get(report_id, include_sources=True)
+        members: dict[str, dict[str, Any]] = {}
+        for source in report.get("sources") or []:
+            source_members: set[str] = set()
+            for entry in source.get("assignees") or []:
+                if not isinstance(entry, dict):
+                    continue
+                user_id = str(entry.get("userId") or "").strip()
+                if not user_id:
+                    continue
+                member = members.setdefault(
+                    user_id,
+                    {"userId": user_id, "name": str(entry.get("name") or user_id), "itemCount": 0, "roles": []},
+                )
+                if user_id not in source_members:
+                    member["itemCount"] += 1
+                    source_members.add(user_id)
+                role = str(entry.get("role") or "负责人")
+                if role not in member["roles"]:
+                    member["roles"].append(role)
+        return sorted(members.values(), key=lambda item: (str(item.get("name") or ""), str(item.get("userId") or "")))
+
+    def personal_report_options(self, *, limit: int = 52) -> list[dict[str, Any]]:
+        rows = self.db.fetch_all(
+            """
+            SELECT * FROM weekly_report
+            WHERE report_kind='combined'
+            ORDER BY created_at DESC, id DESC LIMIT ?
+            """,
+            (max(1, min(200, int(limit))),),
+        )
+        return [self._format_report(row) for row in rows]
 
     def latest(self, *, period_key: str = "", report_kind: str = "combined") -> dict[str, Any] | None:
         if period_key:

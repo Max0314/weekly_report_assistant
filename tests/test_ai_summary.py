@@ -27,7 +27,9 @@ class AISummaryTests(unittest.TestCase):
             }
             for index in range(15)
         ]
-        response = {"choices": [{"message": {"content": json.dumps({key: "内容" for key in SECTION_KEYS})}}]}
+        ai_result = {key: "内容" for key in SECTION_KEYS}
+        ai_result["categoryDigests"] = {"key_project": ["项目风险集中在交付节点", "正常项目按计划推进"]}
+        response = {"choices": [{"message": {"content": json.dumps(ai_result, ensure_ascii=False)}}]}
         with patch("app.services.ai_summary.request_json", return_value=response) as request:
             result = AISummaryClient(config).summarize(
                 window={}, metrics={}, items=items, fallback={},
@@ -46,8 +48,11 @@ class AISummaryTests(unittest.TestCase):
         self.assertNotIn("fallbackDraft", prompt)
         self.assertIn("不得据此编造", prompt["rules"][-1])
         self.assertEqual(100, len(next(item for item in prompt["facts"] if item["id"] != 14)["progress"]))
-        self.assertEqual(3200, payload["max_tokens"])
+        self.assertEqual(4200, payload["max_tokens"])
         self.assertEqual("内容", result["executiveSummary"])
+        self.assertIn("categoryDigests", prompt["output"])
+        self.assertIn("不要输出逐条原文", prompt["output"]["categoryDigests"]["<categoryKey>"])
+        self.assertIn("项目风险集中", result["categoryDigests"]["key_project"])
 
 
 if __name__ == "__main__":

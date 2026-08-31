@@ -16,6 +16,7 @@
     overview: {eyebrow: "WORKSPACE", title: "工作台概览", subtitle: "掌握数据、生成、审核与推送状态"},
     teambition: {eyebrow: "TEAM WORK EXECUTION", title: "TB 工作看板", subtitle: "项目任务、执行人、逾期与临期状态"},
     reports: {eyebrow: "REPORT CENTER", title: "周报展示", subtitle: "当前成稿、正式周报与历史版本"},
+    "personal-reports": {eyebrow: "PERSONAL WEEKLY", title: "个人周报", subtitle: "我的总结与授权成员明细"},
     "report-config": {eyebrow: "REPORT SETTINGS", title: "周报配置", subtitle: "周期口径、项目背景与存档规则"},
     "model-config": {eyebrow: "MODEL GATEWAY", title: "模型配置", subtitle: "沿用 bi_center 的统一模型配置"},
     delivery: {eyebrow: "DELIVERY CONTROL", title: "推送设置", subtitle: "测试目标、正式目标与人工确认"},
@@ -35,6 +36,8 @@
   let latestReadiness = null;
   let latestCoverage = null;
   let teambitionData = null;
+  let personalContext = null;
+  let activePersonalUserId = "";
   let activeReportId = null;
   let reportOriginalSections = {};
   let reportIsDirty = false;
@@ -44,6 +47,7 @@
   let ssoConfigured = false;
   let sessionAuthenticated = false;
   let currentIdentityName = "";
+  let currentIdentityUserId = "";
   let authRedirecting = false;
 
   tokenInput.value = localStorage.getItem("weeklyReportAdminToken") || "";
@@ -92,6 +96,7 @@
     $("#sidebarReadyDetail").textContent = message;
     $("#reportFilterSummary").textContent = "连接管理端后读取周报";
     $("#reports").innerHTML = `<div class="empty-state"><strong>需要登录管理端</strong><p>${escapeHtml(message)}</p><div class="actions"><button data-start-login type="button">${ssoConfigured ? "使用钉钉登录" : "连接管理端"}</button></div></div>`;
+    $("#personalMembers").innerHTML = '<p class="muted">个人周报需要使用钉钉账号登录。</p>';
     $("#openLatestReport").disabled = true;
   };
 
@@ -154,9 +159,14 @@
     if (next === "teambition" && (accessConnected || tokenInput.value.trim()) && !teambitionData) {
       loadTeambitionDashboard().catch((error) => showToast(`TB 看板读取失败：${error.message}`, "error"));
     }
+    if (next === "personal-reports" && sessionAuthenticated) {
+      loadPersonalContext(personalReportIdFromHash()).catch((error) => showToast(`个人周报读取失败：${error.message}`, "error"));
+    }
   };
 
   const routeFromHash = () => String(window.location.hash || "").replace(/^#\/?/, "").split("?")[0] || "overview";
+  const routeQuery = () => new URLSearchParams(String(window.location.hash || "").split("?", 2)[1] || "");
+  const personalReportIdFromHash = () => toInt(routeQuery().get("reportId"), 0);
   const openSidebar = () => {
     $("#appSidebar").classList.add("show");
     $("#sidebarBackdrop").classList.add("show");
@@ -298,6 +308,74 @@
     return data;
   };
 
+  const sectionLines = (value) => String(value || "").split(/\r?\n/).map((line) => line.replace(/^[-•*]\s*/, "").trim()).filter(Boolean);
+
+  const renderPersonalMembers = () => {
+    const members = personalContext?.members || [];
+    $("#personalMemberHint").textContent = personalContext?.canViewMembers
+      ? "可查看本人以及授权组织范围内有本周事项的成员。"
+      : "当前仅展示本人周报。";
+    $("#personalMembers").innerHTML = members.length ? members.map((item) => `
+      <button class="personal-member ${item.userId === activePersonalUserId ? "active" : ""}" data-personal-user-id="${escapeHtml(item.userId)}" type="button">
+        <span><strong>${escapeHtml(item.name || item.userId)}</strong><small>${escapeHtml(item.department || item.title || (item.isSelf ? "本人" : "未标注部门"))}</small></span>
+        <em>${item.itemCount || 0}</em>
+      </button>`).join("") : '<p class="muted">当前周报没有可查看成员。</p>';
+  };
+
+  const renderPersonalReport = (data) => {
+    const person = data.person || {};
+    const metrics = data.metrics || {};
+    $("#personalHero").innerHTML = `<div><span>PERSONAL WEEKLY REPORT</span><h2>${escapeHtml(person.name || "个人周报")}</h2><p>${escapeHtml(data.window?.label || data.periodKey || "")} · 团队周报 v${data.version || 0}</p></div><div class="personal-hero-tag">${escapeHtml(statusLabel(data.workflowState))}</div>`;
+    const cards = [
+      ["关联事项", metrics.itemCount || 0, `涉及 ${Object.keys(metrics.byCategory || {}).length} 个分类`],
+      ["已完成", metrics.completedCount || 0, `进行中/待处理 ${metrics.inProgressCount || 0}`],
+      ["风险事项", metrics.riskCount || 0, "按事实状态识别"],
+      ["逾期事项", metrics.overdueCount || 0, "未关闭且已过截止"],
+      ["高优先级", metrics.highPriorityCount || 0, "高或紧急"],
+      ["承担角色", Object.keys(metrics.byRole || {}).length, Object.entries(metrics.byRole || {}).map(([role, count]) => `${role} ${count}`).join(" · ") || "暂无归属"],
+    ];
+    $("#personalStats").innerHTML = cards.map(([label, value, detail]) => `<article class="metric-card"><span>${escapeHtml(label)}</span><strong>${escapeHtml(value)}</strong><small>${escapeHtml(detail)}</small></article>`).join("");
+    $("#personalSummary").textContent = data.summary || "本周期暂无归属事实。";
+    const items = data.items || [];
+    $("#personalCategories").innerHTML = (data.categorySections || []).length ? data.categorySections.map((section) => {
+      const categoryItems = items.filter((item) => String(item.categoryKey || item.tableId) === String(section.key));
+      const subtypeChips = Object.entries(section.bySubcategory || {}).map(([name, count]) => `<span>${escapeHtml(name)} ${count}</span>`).join("");
+      return `<section class="panel personal-category"><div class="personal-category-head"><div><p class="eyebrow">${String(section.order || "").padStart(2, "0")}</p><h2>${escapeHtml(section.label || "未分类")}</h2></div><div class="personal-category-count"><strong>${section.itemCount || 0}</strong><span>项工作</span></div></div>${subtypeChips ? `<div class="personal-subtypes">${subtypeChips}</div>` : ""}<div class="personal-item-list">${categoryItems.map((item) => {
+        const tags = [...(item.roles || []), item.subcategory, item.status || "未标记", item.priority ? `${item.priority}优先级` : ""].filter(Boolean);
+        const dates = [item.eventAt ? `业务日期 ${String(item.eventAt).split("T")[0]}` : "", item.dueAt ? `截止 ${String(item.dueAt).split("T")[0]}` : ""].filter(Boolean).join(" · ");
+        return `<article class="personal-item"><div class="personal-item-title"><h3>${escapeHtml(item.title || "未命名事项")}</h3><div>${tags.map((tag) => `<span>${escapeHtml(tag)}</span>`).join("")}</div></div>${item.progressText ? `<p><strong>本周进展</strong>${escapeHtml(item.progressText)}</p>` : ""}${item.planText ? `<p><strong>下周计划</strong>${escapeHtml(item.planText)}</p>` : ""}${item.riskText ? `<p class="personal-risk"><strong>风险提示</strong>${escapeHtml(item.riskText)}</p>` : ""}${dates ? `<small>${escapeHtml(dates)}</small>` : ""}</article>`;
+      }).join("")}</div></section>`;
+    }).join("") : '<div class="empty-state"><strong>本周期暂无个人事项</strong><p>团队周报已生成，但没有匹配到该成员的责任人字段。</p></div>';
+  };
+
+  const loadPersonalReport = async (reportId = Number($("#personalReportPeriod").value || personalContext?.selectedReportId || 0), userId = activePersonalUserId) => {
+    if (!reportId) {
+      renderPersonalMembers();
+      $("#personalCategories").innerHTML = '<div class="empty-state"><strong>暂无综合周报</strong><p>请先在周报展示中生成综合版周报。</p></div>';
+      return null;
+    }
+    const params = new URLSearchParams();
+    if (userId) params.set("user_id", userId);
+    const data = await api(`/api/personal-reports/${reportId}?${params.toString()}`);
+    activePersonalUserId = data.person?.userId || userId || currentIdentityUserId;
+    renderPersonalMembers();
+    renderPersonalReport(data);
+    return data;
+  };
+
+  const loadPersonalContext = async (reportId = Number($("#personalReportPeriod")?.value || 0)) => {
+    if (!sessionAuthenticated) throw new Error("个人周报需要使用钉钉账号登录");
+    const suffix = reportId ? `?report_id=${encodeURIComponent(reportId)}` : "";
+    personalContext = await api(`/api/personal-reports/context${suffix}`);
+    const reports = personalContext.reports || [];
+    const selected = Number(personalContext.selectedReportId || reports[0]?.id || 0);
+    $("#personalReportPeriod").innerHTML = reports.length ? reports.map((item) => `<option value="${item.id}" ${Number(item.id) === selected ? "selected" : ""}>${escapeHtml(item.window?.label || item.periodKey)} · v${item.version}</option>`).join("") : '<option value="">暂无综合周报</option>';
+    const members = personalContext.members || [];
+    if (!members.some((item) => item.userId === activePersonalUserId)) activePersonalUserId = personalContext.viewer?.userId || currentIdentityUserId;
+    renderPersonalMembers();
+    return loadPersonalReport(selected, activePersonalUserId);
+  };
+
   const tbStatusLabel = (value) => ({
     overdue: "已逾期", due_soon: "7 天内到期", in_progress: "进行中", completed: "已完成",
   }[value] || value || "未知");
@@ -363,6 +441,8 @@
     $("#saveSections").disabled = true;
     $("#reportDirtyHint").textContent = "修改后保存会清除旧图片和审核状态。";
     $("#reportDirtyHint").className = "";
+    const categorySections = report.sections?.categorySections || [];
+    $("#reportCategorySections").innerHTML = categorySections.length ? categorySections.map((section) => `<article><div><strong>${escapeHtml(section.label || "未分类")}</strong><span>${section.itemCount || 0} 项 · 风险 ${section.riskCount || 0} · 逾期 ${section.overdueCount || 0}</span></div><ol>${sectionLines(section.content).map((line) => `<li>${escapeHtml(line)}</li>`).join("")}</ol></article>`).join("") : '<p class="muted">本版没有结构化分类，事实清单仍可正常查看。</p>';
     $("#reportSources").innerHTML = (report.sources || []).length ? report.sources.map((item) => `<article><strong>${escapeHtml(item.title || "未命名事项")}</strong><span>${escapeHtml(item.category || "")} · ${escapeHtml(item.status || "未标记")}</span><p>${escapeHtml(item.progressText || item.planText || item.riskText || "暂无详情")}</p></article>`).join("") : '<p class="muted">本版周报未纳入事实记录。</p>';
     $("#reportDialog").showModal();
     return report;
@@ -681,9 +761,12 @@
     sessionStorage.setItem("weeklyReportManualLogout", "1");
     sessionAuthenticated = false;
     currentIdentityName = "";
+    currentIdentityUserId = "";
     setAccessDisconnected("已退出当前钉钉账号。", {open: true});
   });
   $("#refreshAll").addEventListener("click", refreshAll);
+  $("#refreshPersonalReport").addEventListener("click", () => run("刷新个人周报", () => loadPersonalContext(), {refresh: false}));
+  $("#personalReportPeriod").addEventListener("change", () => run("切换个人周报周期", () => loadPersonalContext(Number($("#personalReportPeriod").value || 0)), {refresh: false}));
   $("#openLatestReport").addEventListener("click", () => {
     const latest = reportItems[0];
     if (!latest) return showToast("暂无可打开的周报。", "error");
@@ -852,6 +935,12 @@
     }
 
     const reportButton = event.target.closest("[data-report-action]");
+    const personalMember = event.target.closest("[data-personal-user-id]");
+    if (personalMember) {
+      activePersonalUserId = personalMember.dataset.personalUserId;
+      run("查看成员周报", () => loadPersonalReport(undefined, activePersonalUserId), {refresh: false});
+      return;
+    }
     if (!reportButton) return;
     const id = reportButton.dataset.reportId;
     const reportAction = reportButton.dataset.reportAction;
@@ -877,10 +966,12 @@
       ssoConfigured = Boolean(status.ssoConfigured);
       sessionAuthenticated = Boolean(status.authenticated);
       currentIdentityName = String(status.user?.name || "");
+      currentIdentityUserId = String(status.user?.userId || "");
       if (sessionAuthenticated) {
         sessionStorage.removeItem("weeklyReportManualLogout");
         setAccessConnected(currentIdentityName);
         await refreshAll();
+        if (routeFromHash() === "personal-reports") await loadPersonalContext(personalReportIdFromHash());
         return;
       }
       if (ssoConfigured && sessionStorage.getItem("weeklyReportManualLogout") !== "1") {

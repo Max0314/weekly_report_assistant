@@ -168,6 +168,36 @@ class SchedulerSecurityAndWebTests(unittest.TestCase):
         self.assertIn("leader_roles_json", columns)
         self.assertIsNotNone(organization_table)
 
+    def test_additive_migration_upgrades_an_existing_source_record(self) -> None:
+        path = Path(self.temp_dir.name) / "old-source.db"
+        connection = sqlite3.connect(path)
+        connection.execute(
+            """
+            CREATE TABLE source_record (
+              id INTEGER PRIMARY KEY, base_id TEXT, table_id TEXT, record_id TEXT,
+              changed_at TEXT, event_at TEXT, due_at TEXT,
+              is_deleted INTEGER NOT NULL DEFAULT 0,
+              UNIQUE(base_id, table_id, record_id)
+            )
+            """
+        )
+        connection.commit()
+        connection.close()
+        database = Database(path)
+        database.initialize()
+        with database.connect() as upgraded:
+            columns = {
+                str(row["name"])
+                for row in upgraded.execute("PRAGMA table_info(source_record)")
+            }
+            category_index = upgraded.execute(
+                "SELECT name FROM sqlite_master WHERE type='index' AND name='idx_source_record_category'"
+            ).fetchone()
+        self.assertTrue(
+            {"category_key", "category_order", "subcategory", "assignees_json"}.issubset(columns)
+        )
+        self.assertIsNotNone(category_index)
+
     def test_production_callback_fails_closed_without_a_token(self) -> None:
         test_app = FastAPI()
         test_app.include_router(router)
@@ -206,8 +236,10 @@ class SchedulerSecurityAndWebTests(unittest.TestCase):
         self.assertIn('api("/api/config"', script)
         self.assertIn('api("/api/model-config"', script)
         self.assertIn('api("/api/model-config/test"', script)
-        self.assertIn("styles.css?v=20260828d", html)
-        self.assertIn("app.js?v=20260828d", html)
+        self.assertIn("styles.css?v=20260831b", html)
+        self.assertIn("app.js?v=20260831b", html)
+        self.assertIn('data-route="personal-reports"', html)
+        self.assertIn('data-page="personal-reports"', html)
         self.assertIn('id="cancelSections"', html)
         self.assertIn('id="openLatestReport"', html)
         self.assertIn('data-route="reports"', html)
@@ -215,6 +247,7 @@ class SchedulerSecurityAndWebTests(unittest.TestCase):
         self.assertIn('"edit", "编辑正文"', script)
         self.assertIn('api/auth/dingtalk/login', script)
         self.assertIn('api/auth/session', script)
+        self.assertIn('routeQuery().get("reportId")', script)
         self.assertIn('id="loginWithDingTalk"', html)
         self.assertIn("proxy_pass http://127.0.0.1:39022;", nginx)
         self.assertNotIn("proxy_pass http://127.0.0.1:39022/;", nginx)

@@ -226,7 +226,7 @@ class AdminAuthService:
         return {
             "authenticated": True,
             "ssoConfigured": True,
-            "user": {"name": identity.name},
+            "user": {"userId": identity.user_id, "name": identity.name},
         }
 
 

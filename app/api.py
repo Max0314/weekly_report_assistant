@@ -15,6 +15,7 @@ from .services.collector import source_collector
 from .services.archive import archive_service
 from .services.admin_auth import (
     AdminAuthError,
+    AdminIdentity,
     OAUTH_STATE_COOKIE,
     SESSION_COOKIE,
     admin_auth_service,
@@ -84,6 +85,27 @@ def _admin_token(
     if not hmac.compare_digest(supplied, expected):
         raise HTTPException(status_code=401, detail="invalid admin token")
     return "admin"
+
+
+def _session_identity(request: Request) -> AdminIdentity:
+    if not admin_auth_service.configured:
+        raise HTTPException(status_code=503, detail="钉钉登录尚未配置")
+    session_token = str(request.cookies.get(SESSION_COOKIE) or "").strip()
+    if not session_token:
+        raise HTTPException(status_code=401, detail="请先使用钉钉登录")
+    try:
+        return admin_auth_service.authenticate(session_token)
+    except AdminAuthError as exc:
+        raise HTTPException(status_code=401, detail=str(exc)) from exc
+
+
+def _personal_full_scope(identity: AdminIdentity) -> bool:
+    return any(
+        str(item.get("userId") or "").strip() == identity.user_id
+        and item.get("enabled") is not False
+        for item in workflow_config_service.get().get("approverTargets") or []
+        if isinstance(item, dict)
+    )
 
 
 def _raise_api_error(exc: Exception) -> None:
@@ -473,6 +495,70 @@ def remind_missing_managers(body: CoverageBody, _: str = Depends(_admin_token)) 
 @router.get("/api/reports")
 def list_reports(limit: int = Query(default=20, ge=1, le=100), _: str = Depends(_admin_token)) -> dict[str, Any]:
     return {"items": report_service.list(limit=limit)}
+
+
+@router.get("/api/personal-reports/context")
+def personal_report_context(
+    report_id: int = Query(default=0, ge=0),
+    identity: AdminIdentity = Depends(_session_identity),
+) -> dict[str, Any]:
+    reports = report_service.personal_report_options(limit=52)
+    selected_report_id = int(report_id or (reports[0]["id"] if reports else 0))
+    if report_id and selected_report_id not in {int(item["id"]) for item in reports}:
+        raise HTTPException(status_code=404, detail="综合周报不存在")
+    full_scope = _personal_full_scope(identity)
+    allowed = {
+        str(item.get("userId") or ""): item
+        for item in directory_service.accessible_people(identity.user_id, full_scope=full_scope)
+    }
+    report_members = report_service.personal_members(selected_report_id) if selected_report_id else []
+    report_members_by_id = {str(item.get("userId") or ""): item for item in report_members}
+    visible_ids = set(allowed).intersection(report_members_by_id)
+    visible_ids.add(identity.user_id)
+    members: list[dict[str, Any]] = []
+    for user_id in visible_ids:
+        directory_person = allowed.get(user_id, {})
+        report_person = report_members_by_id.get(user_id, {})
+        members.append(
+            {
+                "userId": user_id,
+                "name": str(directory_person.get("name") or report_person.get("name") or user_id),
+                "department": str(directory_person.get("department") or ""),
+                "title": str(directory_person.get("title") or ""),
+                "itemCount": int(report_person.get("itemCount") or 0),
+                "roles": report_person.get("roles") or [],
+                "isSelf": user_id == identity.user_id,
+            }
+        )
+    members.sort(key=lambda item: (not item["isSelf"], str(item.get("name") or "")))
+    return {
+        "viewer": {"userId": identity.user_id, "name": identity.name},
+        "selectedReportId": selected_report_id,
+        "reports": reports,
+        "members": members,
+        "canViewMembers": len(members) > 1,
+    }
+
+
+@router.get("/api/personal-reports/{report_id}")
+def get_personal_report(
+    report_id: int,
+    user_id: str = Query(default="", max_length=200),
+    identity: AdminIdentity = Depends(_session_identity),
+) -> dict[str, Any]:
+    target_user_id = str(user_id or identity.user_id).strip()
+    full_scope = _personal_full_scope(identity)
+    if not directory_service.can_view_person(identity.user_id, target_user_id, full_scope=full_scope):
+        raise HTTPException(status_code=403, detail="无权查看该成员的个人周报")
+    person = directory_service.lookup_by_user_id().get(target_user_id, {})
+    try:
+        return report_service.personal(
+            report_id,
+            user_id=target_user_id,
+            name=str(person.get("employee_name") or (identity.name if target_user_id == identity.user_id else "")),
+        )
+    except Exception as exc:
+        _raise_api_error(exc)
 
 
 @router.post("/api/reports/generate")

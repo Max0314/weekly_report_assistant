@@ -130,7 +130,10 @@ class TeambitionService:
             "table_id": TEAMBITION_TABLE_ID,
             "table_name": "TB任务",
             "record_id": task["task_id"],
+            "category_key": "teambition_task",
+            "category_order": 45,
             "category": "TB任务",
+            "subcategory": project_label,
             "title": task["content"] or f"TB任务 {task['unique_id'] or task['task_id']}",
             "status": status,
             "priority": "高" if int(task["priority"] or 0) >= 2 else ("中" if int(task["priority"] or 0) == 1 else ""),
@@ -143,6 +146,19 @@ class TeambitionService:
             "project_manager_names_json": json.dumps(
                 [_text(employee.get("employee_name"))] if _text(employee.get("employee_name")) else [],
                 ensure_ascii=False,
+            ),
+            "assignees_json": json.dumps(
+                [
+                    {
+                        "userId": task["executor_user_id"],
+                        "name": _text(employee.get("employee_name")) or task["executor_user_id"],
+                        "role": "TB执行人",
+                    }
+                ]
+                if task["executor_user_id"]
+                else [],
+                ensure_ascii=False,
+                separators=(",", ":"),
             ),
             "event_at": task["accomplished_at"] or task["source_updated_at"],
             "due_at": task["due_at"],
@@ -320,10 +336,11 @@ class TeambitionService:
                 for row in connection.execute("SELECT project_id,name FROM teambition_project")
             }
             source_columns = [
-                "base_id", "table_id", "table_name", "record_id", "category", "title",
+                "base_id", "table_id", "table_name", "record_id", "category_key",
+                "category_order", "category", "subcategory", "title",
                 "status", "priority", "progress_text", "plan_text", "risk_text",
                 "product_manager_user_ids_json", "project_manager_user_ids_json",
-                "product_manager_names_json", "project_manager_names_json", "event_at",
+                "product_manager_names_json", "project_manager_names_json", "assignees_json", "event_at",
                 "due_at", "source_created_at", "source_updated_at", "record_hash", "raw_json",
             ]
             parent_task_ids = {
@@ -362,12 +379,15 @@ class TeambitionService:
                         {','.join(source_columns)},first_seen_at,last_seen_at,changed_at,is_deleted
                     ) VALUES ({','.join('?' for _ in source_columns)},?,?,?,?)
                     ON CONFLICT(base_id,table_id,record_id) DO UPDATE SET
-                        table_name=excluded.table_name,category=excluded.category,
+                        table_name=excluded.table_name,category_key=excluded.category_key,
+                        category_order=excluded.category_order,category=excluded.category,
+                        subcategory=excluded.subcategory,
                         title=excluded.title,status=excluded.status,priority=excluded.priority,
                         progress_text=excluded.progress_text,plan_text=excluded.plan_text,
                         risk_text=excluded.risk_text,
                         project_manager_user_ids_json=excluded.project_manager_user_ids_json,
                         project_manager_names_json=excluded.project_manager_names_json,
+                        assignees_json=excluded.assignees_json,
                         event_at=excluded.event_at,due_at=excluded.due_at,
                         source_created_at=excluded.source_created_at,
                         source_updated_at=excluded.source_updated_at,

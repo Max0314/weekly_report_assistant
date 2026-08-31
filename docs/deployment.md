@@ -116,11 +116,15 @@ https://neoflow-cn.neo-net.com/weekly-assistant/api/auth/dingtalk/callback
 - `weekly_report.archive_status/archive_record_id/archive_error TEXT NOT NULL DEFAULT ''`
 - `weekly_report.archive_attempted_at/archived_at TEXT NOT NULL DEFAULT ''`
 - `weekly_report.archive_payload_json TEXT NOT NULL DEFAULT '{}'`
+- `source_record.category_key TEXT NOT NULL DEFAULT ''`
+- `source_record.category_order INTEGER NOT NULL DEFAULT 999`
+- `source_record.subcategory TEXT NOT NULL DEFAULT ''`
+- `source_record.assignees_json TEXT NOT NULL DEFAULT '[]'`
 - `employee_cache` 增加工号、主部门 ID、任职来源、负责人标志与负责人范围字段
 - 新建 `organization_cache` 和 `employee_org_relation_cache` 两张可重建缓存表
 - 新建 `teambition_task`、`teambition_project`、`teambition_user_map` 和 `teambition_sync_run` 四张 TB 缓存/审计表；并以 `source_record.table_id=teambition_tasks` 保存叶子任务周报投影
 
-影响：已有周报内容、状态和发送日志不变；新增归档字段初值为空，不会自动回写历史周报。旧周报没有历史事实快照时继续按原兼容逻辑读取源记录，新生成周报保存生成时事实与覆盖清单。员工新增字段初值为空，下一次目录同步会事务性填充员工、组织和关系缓存，不修改 bi_center 数据。TB 新表初始为空，只有管理员手动同步或显式打开部署总开关后才会写入；不会自动回填历史周报。
+影响：已有周报内容、状态和发送日志不变；来源新增字段使用空值或 `999`，部署后的下一次正式 AI 表/TB 同步会按真实字段补齐，不会伪造历史分类。已有事实快照不改写；没有历史事实快照的旧周报继续按兼容逻辑读取当前源记录，新生成周报保存分类、负责人角色和覆盖清单。个人周报由现有快照实时派生，不新增表或重复数据。员工新增字段初值为空，下一次目录同步会事务性填充员工、组织和关系缓存，不修改 bi_center 数据。TB 新表初始为空，只有管理员手动同步或显式打开部署总开关后才会写入；不会自动回填历史周报。
 
 ## 回滚
 
@@ -129,6 +133,6 @@ https://neoflow-cn.neo-net.com/weekly-assistant/api/auth/dingtalk/callback
 3. 旧版本会忽略新增列和缓存表，因此应用回滚无需删除结构。
 4. 如需彻底回滚目录缓存结构，停服并备份 SQLite 后，可在数据库副本中删除 `employee_org_relation_cache`、`organization_cache`；员工新增列可保留为空。
 5. 如需彻底回滚 TB 接入，先设置 `TEAMBITION_SYNC_ENABLED=false`，再在数据库副本中删除四张 `teambition_*` 表和 `source_record.table_id=teambition_tasks` 投影；历史周报的事实快照保持不变。
-6. 如需物理删除新增列，应在数据库副本上重建表并验证后替换；不在生产库上直接执行破坏性变更。
+6. 回滚本次分类/个人视图无需删除数据：旧镜像会忽略 `source_record` 新增列；如需物理删除新增列，应在数据库副本上重建表并验证后替换，不在生产库上直接执行破坏性变更。
 
 撤回钉钉消息依赖发送时取得的 `processQueryKey`，超出钉钉允许窗口时可能无法撤回。部分撤回失败时周报进入 `retryable_error`，不会错误标记为全部撤回。

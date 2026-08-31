@@ -151,7 +151,57 @@ class SourceCollector:
                 str(item.get("userId") or "") for item in self.config_service.get().get("projectManagerRoster") or []
                 if item.get("enabled") is not False
             }
+            product_names_by_id = dict(zip(product_user_ids, product_names))
             project_user_ids = [item for item in product_user_ids if item in project_roster]
+            project_names = [product_names_by_id.get(item, item) for item in project_user_ids]
+        assignees: list[dict[str, str]] = []
+
+        def add_assignees(user_ids: list[str], names: list[str], role: str) -> None:
+            for index, user_id in enumerate(user_ids):
+                normalized_user_id = str(user_id or "").strip()
+                if not normalized_user_id:
+                    continue
+                name = str(names[index] if index < len(names) else normalized_user_id).strip()
+                assignment = {
+                    "userId": normalized_user_id,
+                    "name": name or normalized_user_id,
+                    "role": str(role or "负责人").strip() or "负责人",
+                }
+                if assignment not in assignees:
+                    assignees.append(assignment)
+
+        for assignment_spec in spec.get("assigneeFields") or []:
+            if not isinstance(assignment_spec, dict):
+                continue
+            assignment_fields = assignment_spec.get("fields") or []
+            if isinstance(assignment_fields, str):
+                assignment_fields = [assignment_fields]
+            role_user_ids, role_names, _ = _people(
+                _first(values, [str(item) for item in assignment_fields]),
+                employees_by_user_id=employees_by_user_id,
+                employees_by_union_id=employees_by_union_id,
+            )
+            add_assignees(role_user_ids, role_names, str(assignment_spec.get("role") or "负责人"))
+        assigned_user_ids = {item["userId"] for item in assignees}
+        add_assignees(
+            [item for item in product_user_ids if item not in assigned_user_ids],
+            [
+                product_names[index]
+                for index, item in enumerate(product_user_ids)
+                if item not in assigned_user_ids and index < len(product_names)
+            ],
+            "产品经理",
+        )
+        assigned_user_ids = {item["userId"] for item in assignees}
+        add_assignees(
+            [item for item in project_user_ids if item not in assigned_user_ids],
+            [
+                project_names[index]
+                for index, item in enumerate(project_user_ids)
+                if item not in assigned_user_ids and index < len(project_names)
+            ],
+            "项目负责人",
+        )
         title = _join(values, spec.get("titleFields") or [])
         if spec.get("roster"):
             title = "、".join(product_display_names)
@@ -177,7 +227,10 @@ class SourceCollector:
             "table_id": spec["tableId"],
             "table_name": spec["tableName"],
             "record_id": record_id,
+            "category_key": "roster" if spec.get("roster") else str(spec.get("categoryKey") or spec.get("key") or ""),
+            "category_order": int(spec.get("categoryOrder") or 999),
             "category": "人员名单" if spec.get("roster") else str(spec.get("category") or ""),
+            "subcategory": _text(_first(values, spec.get("subcategoryFields") or [])),
             "title": title,
             "status": status,
             "priority": priority,
@@ -188,6 +241,7 @@ class SourceCollector:
             "project_manager_user_ids_json": json.dumps(project_user_ids, ensure_ascii=False),
             "product_manager_names_json": json.dumps(product_names, ensure_ascii=False),
             "project_manager_names_json": json.dumps(project_names, ensure_ascii=False),
+            "assignees_json": json.dumps(assignees, ensure_ascii=False, separators=(",", ":")),
             "event_at": event_at,
             "due_at": due_at,
             "source_created_at": self._metadata_time(record, ("createdAt", "createTime", "createdTime")),
@@ -240,10 +294,11 @@ class SourceCollector:
                     changed_at = seen_at
                     changed += 1
                 columns = [
-                    "base_id", "table_id", "table_name", "record_id", "category", "title", "status", "priority",
+                    "base_id", "table_id", "table_name", "record_id", "category_key", "category_order",
+                    "category", "subcategory", "title", "status", "priority",
                     "progress_text", "plan_text", "risk_text", "product_manager_user_ids_json",
                     "project_manager_user_ids_json", "product_manager_names_json", "project_manager_names_json",
-                    "event_at", "due_at", "source_created_at", "source_updated_at", "record_hash", "raw_json",
+                    "assignees_json", "event_at", "due_at", "source_created_at", "source_updated_at", "record_hash", "raw_json",
                 ]
                 values = [item[column] for column in columns]
                 connection.execute(
@@ -251,13 +306,16 @@ class SourceCollector:
                     INSERT INTO source_record({','.join(columns)}, first_seen_at, last_seen_at, changed_at, is_deleted)
                     VALUES ({','.join(['?'] * len(columns))}, ?, ?, ?, 0)
                     ON CONFLICT(base_id, table_id, record_id) DO UPDATE SET
-                        table_name=excluded.table_name, category=excluded.category, title=excluded.title,
+                        table_name=excluded.table_name, category_key=excluded.category_key,
+                        category_order=excluded.category_order, category=excluded.category,
+                        subcategory=excluded.subcategory, title=excluded.title,
                         status=excluded.status, priority=excluded.priority, progress_text=excluded.progress_text,
                         plan_text=excluded.plan_text, risk_text=excluded.risk_text,
                         product_manager_user_ids_json=excluded.product_manager_user_ids_json,
                         project_manager_user_ids_json=excluded.project_manager_user_ids_json,
                         product_manager_names_json=excluded.product_manager_names_json,
                         project_manager_names_json=excluded.project_manager_names_json,
+                        assignees_json=excluded.assignees_json,
                         event_at=excluded.event_at, due_at=excluded.due_at,
                         source_created_at=excluded.source_created_at, source_updated_at=excluded.source_updated_at,
                         record_hash=excluded.record_hash, raw_json=excluded.raw_json,
