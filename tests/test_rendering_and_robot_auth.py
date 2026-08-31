@@ -43,6 +43,31 @@ class RenderingAndAuthTests(unittest.TestCase):
         self.assertIn("max-width:1480px", output)
         self.assertNotIn('class="external-open"', report_html(report))
 
+    def test_report_html_uses_category_digest_instead_of_raw_details(self) -> None:
+        report = {
+            "id": 1,
+            "title": "分类明细版",
+            "version": 1,
+            "window": {"label": "本周"},
+            "metrics": {},
+            "sections": {
+                "categorySections": [
+                    {
+                        "label": "客户拜访与交流",
+                        "itemCount": 9,
+                        "digest": "- 完成 9 项客户交流，重点推进合作机会与方案确认。",
+                        "content": "客户 A 原始拜访记录；客户 B 原始会议记录。",
+                    }
+                ]
+            },
+            "sources": [],
+        }
+
+        output = report_html(report)
+
+        self.assertIn("完成 9 项客户交流", output)
+        self.assertNotIn("客户 A 原始拜访记录", output)
+
     def test_sensitive_robot_command_requires_approver_and_configured_group(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             database = Database(Path(temp_dir) / "test.db")

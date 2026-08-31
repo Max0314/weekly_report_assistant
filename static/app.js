@@ -442,7 +442,7 @@
     $("#reportDirtyHint").textContent = "修改后保存会清除旧图片和审核状态。";
     $("#reportDirtyHint").className = "";
     const categorySections = report.sections?.categorySections || [];
-    $("#reportCategorySections").innerHTML = categorySections.length ? categorySections.map((section) => `<article><div><strong>${escapeHtml(section.label || "未分类")}</strong><span>${section.itemCount || 0} 项 · 风险 ${section.riskCount || 0} · 逾期 ${section.overdueCount || 0}</span></div><ol>${sectionLines(section.content).map((line) => `<li>${escapeHtml(line)}</li>`).join("")}</ol></article>`).join("") : '<p class="muted">本版没有结构化分类，事实清单仍可正常查看。</p>';
+    $("#reportCategorySections").innerHTML = categorySections.length ? categorySections.map((section) => `<article><div><strong>${escapeHtml(section.label || "未分类")}</strong><span>${section.itemCount || 0} 项 · 风险 ${section.riskCount || 0} · 逾期 ${section.overdueCount || 0}</span></div><ol>${sectionLines(section.digest || section.content).map((line) => `<li>${escapeHtml(line)}</li>`).join("")}</ol></article>`).join("") : '<p class="muted">本版没有结构化分类，事实清单仍可正常查看。</p>';
     $("#reportSources").innerHTML = (report.sources || []).length ? report.sources.map((item) => `<article><strong>${escapeHtml(item.title || "未命名事项")}</strong><span>${escapeHtml(item.category || "")} · ${escapeHtml(item.status || "未标记")}</span><p>${escapeHtml(item.progressText || item.planText || item.riskText || "暂无详情")}</p></article>`).join("") : '<p class="muted">本版周报未纳入事实记录。</p>';
     $("#reportDialog").showModal();
     return report;

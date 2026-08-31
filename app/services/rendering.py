@@ -82,7 +82,7 @@ def report_html(report: dict[str, Any], *, interactive: bool = False) -> str:
         '<article class="card category-card">'
         f'<div class="category-heading"><h2>{html.escape(str(section.get("label") or "未分类"))}</h2>'
         f'<span>{int(section.get("itemCount") or 0)} 项</span></div>'
-        f'{_section_html(section.get("content"))}'
+        f'{_section_html(section.get("digest") or section.get("content"))}'
         '</article>'
         for section in category_sections
         if isinstance(section, dict)
