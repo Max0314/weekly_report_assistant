@@ -326,6 +326,14 @@ class SchedulerSecurityAndWebTests(unittest.TestCase):
         self.assertIn("location = /weekly-assistant/api/auth/dingtalk/callback", nginx)
         self.assertIn("--no-access-log", dockerfile)
 
+    def test_index_disables_browser_cache_so_new_ui_is_loaded(self) -> None:
+        from app.main import app as test_app
+
+        response = TestClient(test_app).get("/")
+        self.assertEqual(200, response.status_code)
+        self.assertEqual("no-cache, no-store, must-revalidate", response.headers.get("cache-control"))
+        self.assertEqual("no-cache", response.headers.get("pragma"))
+
     def test_readiness_exposes_safe_bi_center_directory_metadata(self) -> None:
         workflow = {
             "previewGroupTargets": [],
