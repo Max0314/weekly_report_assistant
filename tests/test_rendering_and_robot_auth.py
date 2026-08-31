@@ -3,15 +3,33 @@ from __future__ import annotations
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 
 from app.db import Database
-from app.services.rendering import _section_html, _summary_html, report_html
+from app.services.rendering import ReportRenderer, _section_html, _summary_html, report_html
 from app.services.reports import ReportService
 from app.services.robot_commands import RobotCommandService
 from app.services.workflow_config import WorkflowConfigService
 
 
 class RenderingAndAuthTests(unittest.TestCase):
+    def test_personal_report_card_url_uses_click_safe_redirect(self) -> None:
+        renderer = ReportRenderer(
+            config=SimpleNamespace(
+                public_base_url="https://example.test/weekly-assistant",
+                dingtalk_sso_configured=True,
+            )
+        )
+
+        self.assertEqual(
+            "https://example.test/weekly-assistant/api/public/personal-reports/7/open",
+            renderer.personal_report_url(7),
+        )
+        self.assertEqual(
+            "https://example.test/weekly-assistant/#/personal-reports?reportId=7",
+            renderer.personal_report_app_url(7),
+        )
+
     def test_inline_numbered_sections_are_split_without_breaking_decimals(self) -> None:
         output = _section_html("1. 完成流程优化，周期压缩至3.5天。 2. 样机功耗达到2.3W。 3. 发布规范。")
         self.assertEqual(3, output.count("<li>"))

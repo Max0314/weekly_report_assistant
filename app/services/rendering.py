@@ -288,6 +288,12 @@ class ReportRenderer:
         base = self.settings.public_base_url.strip().rstrip("/")
         if not base or not self.settings.dingtalk_sso_configured:
             return ""
+        return f"{base}/api/public/personal-reports/{int(report_id)}/open"
+
+    def personal_report_app_url(self, report_id: int) -> str:
+        base = self.settings.public_base_url.strip().rstrip("/")
+        if not base or not self.settings.dingtalk_sso_configured:
+            return ""
         return f"{base}/#/personal-reports?reportId={int(report_id)}"
 
 

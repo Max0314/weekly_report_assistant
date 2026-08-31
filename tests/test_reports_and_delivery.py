@@ -298,18 +298,19 @@ class ReportsAndDeliveryTests(unittest.TestCase):
             delivery.formal(report["id"])
         delivery.preview(report["id"])
         preview_param = robot.group_calls[0]["msg_param"]
-        self.assertEqual("sampleActionCard", robot.group_calls[0]["msg_key"])
+        self.assertEqual("sampleActionCard2", robot.group_calls[0]["msg_key"])
         self.assertEqual(
             ["查看团队周报", "查看个人周报"],
-            [button["title"] for button in preview_param["btns"]],
+            [preview_param["actionTitle1"], preview_param["actionTitle2"]],
         )
         self.assertEqual(
             [
                 f"https://example.test/reports/{report['id']}",
                 f"https://example.test/#/personal-reports?reportId={report['id']}",
             ],
-            [button["actionURL"] for button in preview_param["btns"]],
+            [preview_param["actionURL1"], preview_param["actionURL2"]],
         )
+        self.assertNotIn("btns", preview_param)
         self.assertNotIn("singleTitle", preview_param)
         with self.assertRaises(DeliveryError):
             delivery.formal(report["id"])

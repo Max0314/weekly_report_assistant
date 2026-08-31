@@ -362,15 +362,14 @@ class DeliveryService:
                     if personal_url:
                         action_items.append({"title": "查看个人周报", "url": personal_url})
                 if len(action_items) > 1:
-                    msg_key = "sampleActionCard"
+                    msg_key = "sampleActionCard2"
                     action_title = " / ".join(item["title"] for item in action_items)
                     msg_param.update(
                         {
-                            "btnOrientation": "0",
-                            "btns": [
-                                {"title": item["title"], "actionURL": item["url"]}
-                                for item in action_items
-                            ],
+                            "actionTitle1": action_items[0]["title"],
+                            "actionURL1": action_items[0]["url"],
+                            "actionTitle2": action_items[1]["title"],
+                            "actionURL2": action_items[1]["url"],
                         }
                     )
                 elif action_items:

@@ -698,6 +698,18 @@ def public_report(report_id: int, expires: int, token: str) -> HTMLResponse:
     )
 
 
+@router.get("/api/public/personal-reports/{report_id}/open", include_in_schema=False)
+def open_personal_report(report_id: int) -> RedirectResponse:
+    try:
+        report_service.get(report_id)
+    except Exception as exc:
+        _raise_api_error(exc)
+    target = report_renderer.personal_report_app_url(report_id)
+    if not target:
+        raise HTTPException(status_code=503, detail="personal report login is not configured")
+    return RedirectResponse(target, status_code=302)
+
+
 @router.get("/api/public/reports/{report_id}/image")
 def public_report_image(report_id: int, expires: int, token: str) -> FileResponse:
     _verify_public(report_id, expires, token)
