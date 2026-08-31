@@ -30,7 +30,8 @@ class RenderingAndAuthTests(unittest.TestCase):
             "window": {"label": "本周"}, "metrics": {}, "sections": {},
             "sources": [{"title": "<b>事项</b>", "category": "测试"}],
         }
-        output = report_html(report, interactive=True)
+        personal_url = "https://example.test/#/personal-reports?reportId=1"
+        output = report_html(report, interactive=True, personal_report_url=personal_url)
         self.assertNotIn("<script>alert(1)</script>", output)
         self.assertIn("&lt;script&gt;", output)
         self.assertIn("&lt;b&gt;事项&lt;/b&gt;", output)
@@ -40,8 +41,12 @@ class RenderingAndAuthTests(unittest.TestCase):
         self.assertNotIn('<details class="card table-card fact-details" open>', output)
         self.assertIn('class="readonly-pill">只读浏览</span>', output)
         self.assertIn('class="external-open"', output)
+        self.assertIn('class="personal-open"', output)
+        self.assertIn("查看个人周报", output)
+        self.assertIn(personal_url, output)
         self.assertIn("max-width:1480px", output)
         self.assertNotIn('class="external-open"', report_html(report))
+        self.assertNotIn('class="personal-open"', report_html(report))
 
     def test_report_html_uses_category_digest_instead_of_raw_details(self) -> None:
         report = {

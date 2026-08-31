@@ -312,14 +312,13 @@ class DeliveryService:
                 raise DeliveryError(str(exc)) from exc
             urls = {"reportUrl": "", "imageUrl": ""}
         personal_url = ""
-        if personal_targets:
-            personal_url_factory = getattr(self.renderer, "personal_report_url", None)
-            if callable(personal_url_factory):
-                personal_url = str(personal_url_factory(report_id) or "")
-            if not personal_url:
-                raise DeliveryError(
-                    "PUBLIC_BASE_URL and DingTalk SSO are required for personal report delivery"
-                )
+        personal_url_factory = getattr(self.renderer, "personal_report_url", None)
+        if callable(personal_url_factory):
+            personal_url = str(personal_url_factory(report_id) or "")
+        if personal_targets and not personal_url:
+            raise DeliveryError(
+                "PUBLIC_BASE_URL and DingTalk SSO are required for personal report delivery"
+            )
         if config.get("sendGroupImages") and not urls.get("imageUrl"):
             raise DeliveryError("PUBLIC_BASE_URL and PUBLIC_LINK_SECRET are required for image delivery")
         markdown = self._markdown(report, preview=preview)
@@ -347,6 +346,7 @@ class DeliveryService:
                 msg_key = "sampleMarkdown"
                 action_url = str(urls.get("reportUrl") or "")
                 action_title = "查看团队周报"
+                action_items: list[dict[str, str]] = []
                 if target_type == "personal":
                     action_url = personal_url
                     action_title = "查看我的个人周报"
@@ -354,8 +354,29 @@ class DeliveryService:
                         msg_param["text"] = (
                             f"{markdown}\n\n[查看团队周报详情]({urls['reportUrl']})"
                         )
-                if action_url:
+                    if action_url:
+                        action_items.append({"title": action_title, "url": action_url})
+                else:
+                    if action_url:
+                        action_items.append({"title": action_title, "url": action_url})
+                    if personal_url:
+                        action_items.append({"title": "查看个人周报", "url": personal_url})
+                if len(action_items) > 1:
                     msg_key = "sampleActionCard"
+                    action_title = " / ".join(item["title"] for item in action_items)
+                    msg_param.update(
+                        {
+                            "btnOrientation": "0",
+                            "btns": [
+                                {"title": item["title"], "actionURL": item["url"]}
+                                for item in action_items
+                            ],
+                        }
+                    )
+                elif action_items:
+                    msg_key = "sampleActionCard"
+                    action_url = action_items[0]["url"]
+                    action_title = action_items[0]["title"]
                     msg_param.update({"singleTitle": action_title, "singleURL": action_url})
                 if target_type == "group":
                     card_result = self.robot.send_group(
@@ -381,9 +402,10 @@ class DeliveryService:
                     snapshot={
                         "phase": phase,
                         "reportUrl": urls.get("reportUrl"),
-                        "personalReportUrl": personal_url if target_type == "personal" else "",
+                        "personalReportUrl": personal_url,
                         "actionTitle": action_title if action_url else "",
                         "actionUrl": action_url,
+                        "actions": action_items,
                     },
                 )
             results.append({"target": name, "messageType": "card", **card_result})

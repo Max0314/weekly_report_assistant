@@ -297,6 +297,20 @@ class ReportsAndDeliveryTests(unittest.TestCase):
         with self.assertRaises(DeliveryError):
             delivery.formal(report["id"])
         delivery.preview(report["id"])
+        preview_param = robot.group_calls[0]["msg_param"]
+        self.assertEqual("sampleActionCard", robot.group_calls[0]["msg_key"])
+        self.assertEqual(
+            ["查看团队周报", "查看个人周报"],
+            [button["title"] for button in preview_param["btns"]],
+        )
+        self.assertEqual(
+            [
+                f"https://example.test/reports/{report['id']}",
+                f"https://example.test/#/personal-reports?reportId={report['id']}",
+            ],
+            [button["actionURL"] for button in preview_param["btns"]],
+        )
+        self.assertNotIn("singleTitle", preview_param)
         with self.assertRaises(DeliveryError):
             delivery.formal(report["id"])
         self.reports.approve(report["id"], actor="approver")
@@ -326,6 +340,7 @@ class ReportsAndDeliveryTests(unittest.TestCase):
         _, preview_kwargs = robot.private_calls[0]
         self.assertEqual("sampleActionCard", preview_kwargs["msg_key"])
         self.assertEqual("查看我的个人周报", preview_kwargs["msg_param"]["singleTitle"])
+        self.assertNotIn("btns", preview_kwargs["msg_param"])
         self.assertEqual(
             f"https://example.test/#/personal-reports?reportId={report['id']}",
             preview_kwargs["msg_param"]["singleURL"],

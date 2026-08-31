@@ -689,7 +689,13 @@ def public_report(report_id: int, expires: int, token: str) -> HTMLResponse:
         _raise_api_error(exc)
     if report["workflowState"] in {"recalled", "cancelled"}:
         raise HTTPException(status_code=410, detail="report is no longer available")
-    return HTMLResponse(report_html(report, interactive=True))
+    return HTMLResponse(
+        report_html(
+            report,
+            interactive=True,
+            personal_report_url=report_renderer.personal_report_url(report_id),
+        )
+    )
 
 
 @router.get("/api/public/reports/{report_id}/image")

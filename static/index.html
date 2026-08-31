@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <meta name="theme-color" content="#f6f8fb">
   <title>产品与项目经理周报助手</title>
-  <link rel="stylesheet" href="static/styles.css?v=20260831d">
+  <link rel="stylesheet" href="static/styles.css?v=20260831e">
 </head>
 <body>
   <div class="app-shell">
@@ -183,7 +183,7 @@
       </section>
 
       <section class="page" data-page="personal-reports" hidden>
-        <div class="page-width">
+        <div class="page-width personal-page-width">
           <section class="page-hero compact-hero">
             <div><p class="eyebrow">PERSONAL WEEKLY</p><h2>个人周报</h2><p>默认查看本人；周报确认人和组织负责人可点击查看授权范围内的成员。</p></div>
             <div class="actions"><select id="personalReportPeriod" aria-label="选择周报周期"><option value="">暂无综合周报</option></select><button id="refreshPersonalReport" class="secondary" type="button">刷新</button></div>
@@ -198,6 +198,9 @@
               <div id="personalStats" class="metric-grid personal-metrics">
                 <article class="metric-card"><span>关联事项</span><strong>—</strong><small>等待读取</small></article>
               </div>
+              <section id="personalCharts" class="personal-chart-grid" aria-label="个人周报数据概览">
+                <div class="panel personal-chart-card"><div class="empty-state"><strong>暂无图表</strong><p>选择周报后展示完成情况与工作分布。</p></div></div>
+              </section>
               <section class="panel"><div class="section-head"><div><p class="eyebrow">SUMMARY</p><h2>本周总结</h2></div></div><p id="personalSummary" class="personal-summary">等待读取个人周报。</p></section>
               <div id="personalCategories" class="personal-category-list"><div class="empty-state"><strong>暂无个人周报</strong><p>请先生成综合周报。</p></div></div>
             </div>
@@ -365,6 +368,6 @@
     <details id="reportSourceDetails" class="source-details"><summary>查看本版纳入的事实清单</summary><div id="reportSources" class="source-list"></div></details>
   </dialog>
 
-  <script src="static/app.js?v=20260831d"></script>
+  <script src="static/app.js?v=20260831e"></script>
 </body>
 </html>

@@ -168,6 +168,15 @@
   const routeFromHash = () => String(window.location.hash || "").replace(/^#\/?/, "").split("?")[0] || "overview";
   const routeQuery = () => new URLSearchParams(String(window.location.hash || "").split("?", 2)[1] || "");
   const personalReportIdFromHash = () => toInt(routeQuery().get("reportId"), 0);
+  const personalUserIdFromHash = () => String(routeQuery().get("userId") || "").trim();
+  const personalReportHref = (reportId, userId = "") => {
+    const url = new URL(window.location.href);
+    const params = new URLSearchParams({reportId: String(reportId || "")});
+    if (userId) params.set("userId", String(userId));
+    url.search = "";
+    url.hash = `#/personal-reports?${params.toString()}`;
+    return url.toString();
+  };
   const openSidebar = () => {
     $("#appSidebar").classList.add("show");
     $("#sidebarBackdrop").classList.add("show");
@@ -326,7 +335,8 @@
   const renderPersonalReport = (data) => {
     const person = data.person || {};
     const metrics = data.metrics || {};
-    $("#personalHero").innerHTML = `<div><span>PERSONAL WEEKLY REPORT</span><h2>${escapeHtml(person.name || "个人周报")}</h2><p>${escapeHtml(data.window?.label || data.periodKey || "")} · 团队周报 v${data.version || 0}</p></div><div class="personal-hero-tag">${escapeHtml(statusLabel(data.workflowState))}</div>`;
+    const externalHref = personalReportHref(data.reportId, person.userId);
+    $("#personalHero").innerHTML = `<div><span>PERSONAL WEEKLY REPORT</span><h2>${escapeHtml(person.name || "个人周报")}</h2><p>${escapeHtml(data.window?.label || data.periodKey || "")} · 团队周报 v${data.version || 0}</p></div><div class="personal-hero-actions"><div class="personal-hero-tag">${escapeHtml(statusLabel(data.workflowState))}</div><a class="personal-external-link" href="${escapeHtml(externalHref)}" target="_blank" rel="noopener noreferrer">外部打开 ↗</a></div>`;
     const cards = [
       ["关联事项", metrics.itemCount || 0, `涉及 ${Object.keys(metrics.byCategory || {}).length} 个分类`],
       ["已完成", metrics.completedCount || 0, `进行中/待处理 ${metrics.inProgressCount || 0}`],
@@ -336,6 +346,30 @@
       ["承担角色", Object.keys(metrics.byRole || {}).length, Object.entries(metrics.byRole || {}).map(([role, count]) => `${role} ${count}`).join(" · ") || "暂无归属"],
     ];
     $("#personalStats").innerHTML = cards.map(([label, value, detail]) => `<article class="metric-card"><span>${escapeHtml(label)}</span><strong>${escapeHtml(value)}</strong><small>${escapeHtml(detail)}</small></article>`).join("");
+    const total = Number(metrics.itemCount || 0);
+    const completed = Number(metrics.completedCount || 0);
+    const inProgress = Number(metrics.inProgressCount || 0);
+    const risks = Number(metrics.riskCount || 0);
+    const completionRate = total ? Math.round((completed / total) * 100) : 0;
+    const riskRate = total ? Math.round((risks / total) * 100) : 0;
+    const categories = Object.entries(metrics.byCategory || {}).sort((a, b) => Number(b[1]) - Number(a[1])).slice(0, 6);
+    const categoryMax = Math.max(1, ...categories.map(([, count]) => Number(count || 0)));
+    $("#personalCharts").innerHTML = `
+      <article class="panel personal-chart-card">
+        <div class="personal-chart-head"><div><p class="eyebrow">PROGRESS</p><h3>工作进展</h3></div><span>${total} 项</span></div>
+        <div class="personal-progress-chart">
+          <div class="personal-donut" style="--complete-angle:${completionRate * 3.6}deg"><div><strong>${completionRate}%</strong><small>完成率</small></div></div>
+          <div class="personal-chart-legend">
+            <div><i class="done"></i><span>已完成</span><strong>${completed}</strong></div>
+            <div><i class="active"></i><span>进行中/待处理</span><strong>${inProgress}</strong></div>
+            <div><i class="risk"></i><span>风险占比</span><strong>${riskRate}%</strong></div>
+          </div>
+        </div>
+      </article>
+      <article class="panel personal-chart-card">
+        <div class="personal-chart-head"><div><p class="eyebrow">DISTRIBUTION</p><h3>工作分类分布</h3></div><span>${categories.length} 类</span></div>
+        <div class="personal-bar-list">${categories.length ? categories.map(([label, count]) => `<div class="personal-bar-row"><span>${escapeHtml(label)}</span><div><i style="width:${Math.max(6, Math.round((Number(count || 0) / categoryMax) * 100))}%"></i></div><strong>${Number(count || 0)}</strong></div>`).join("") : '<p class="muted">本周期暂无分类数据。</p>'}</div>
+      </article>`;
     $("#personalSummary").textContent = data.summary || "本周期暂无归属事实。";
     const items = data.items || [];
     $("#personalCategories").innerHTML = (data.categorySections || []).length ? data.categorySections.map((section) => {
@@ -355,6 +389,7 @@
   const loadPersonalReport = async (reportId = Number($("#personalReportPeriod").value || personalContext?.selectedReportId || 0), userId = activePersonalUserId) => {
     if (!reportId) {
       renderPersonalMembers();
+      $("#personalCharts").innerHTML = '<div class="panel personal-chart-card"><div class="empty-state"><strong>暂无图表</strong><p>请先生成综合版周报。</p></div></div>';
       $("#personalCategories").innerHTML = '<div class="empty-state"><strong>暂无综合周报</strong><p>请先在周报展示中生成综合版周报。</p></div>';
       return null;
     }
@@ -375,6 +410,8 @@
     const selected = Number(personalContext.selectedReportId || reports[0]?.id || 0);
     $("#personalReportPeriod").innerHTML = reports.length ? reports.map((item) => `<option value="${item.id}" ${Number(item.id) === selected ? "selected" : ""}>${escapeHtml(item.window?.label || item.periodKey)} · v${item.version}</option>`).join("") : '<option value="">暂无综合周报</option>';
     const members = personalContext.members || [];
+    const requestedUserId = personalUserIdFromHash();
+    if (requestedUserId && members.some((item) => item.userId === requestedUserId)) activePersonalUserId = requestedUserId;
     if (!members.some((item) => item.userId === activePersonalUserId)) activePersonalUserId = personalContext.viewer?.userId || currentIdentityUserId;
     renderPersonalMembers();
     return loadPersonalReport(selected, activePersonalUserId);
