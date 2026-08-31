@@ -1,20 +1,27 @@
 from __future__ import annotations
 
-import hashlib
 import json
 import re
+import unicodedata
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from ..config import Settings, settings
 from ..db import Database, db
 from ..integrations.teambition import TeambitionClient, teambition_client
-from ..source_catalog import TEAMBITION_TABLE_ID
+from ..source_catalog import SOURCE_TABLES, TEAMBITION_TABLE_ID
 from ..time_utils import SHANGHAI, from_db, now_local, to_db
 from .workflow_config import WorkflowConfigService, workflow_config_service
 
 
 TEAMBITION_BASE_ID = "teambition"
+KEY_PROJECT_TABLE_ID = next(
+    str(item["tableId"]) for item in SOURCE_TABLES if item.get("key") == "projects"
+)
+PROJECT_CODE_PATTERN = re.compile(
+    r"(?<![A-Z0-9])[A-Z]\d{2}/[A-Z0-9]+(?:-[A-Z0-9]+){1,}(?![A-Z0-9])",
+    re.IGNORECASE,
+)
 
 
 def _text(value: Any) -> str:
@@ -44,6 +51,153 @@ def _source_time(value: Any) -> str:
     if parsed.tzinfo is None:
         parsed = parsed.replace(tzinfo=timezone.utc)
     return to_db(parsed.astimezone(SHANGHAI))
+
+
+def _field_text(value: Any) -> str:
+    if isinstance(value, list):
+        return " ".join(filter(None, (_field_text(item) for item in value))).strip()
+    if isinstance(value, dict):
+        for key in ("markdown", "text", "name", "title", "value"):
+            if key in value and value[key] is not value:
+                rendered = _field_text(value[key])
+                if rendered:
+                    return rendered
+        return " ".join(filter(None, (_field_text(item) for item in value.values()))).strip()
+    return _text(value)
+
+
+def _project_code(value: Any) -> str:
+    match = PROJECT_CODE_PATTERN.search(_field_text(value).upper())
+    return match.group(0).upper() if match else ""
+
+
+def _normalized_project_name(value: Any) -> str:
+    normalized = unicodedata.normalize("NFKC", _field_text(value)).lower()
+    return re.sub(r"[^0-9a-z\u4e00-\u9fff]+", "", normalized)
+
+
+def _project_search_terms(value: Any) -> list[str]:
+    name = _field_text(value)
+    if not name:
+        return []
+    terms = [name]
+    base_name = re.split(r"[（(]", name, maxsplit=1)[0].strip()
+    if len(base_name) >= 6:
+        terms.append(base_name)
+    compact_name = re.sub(r"\s+", "", base_name or name)
+    for length in (12, 6):
+        if len(compact_name) > length:
+            terms.append(compact_name[:length])
+    return list(dict.fromkeys(term for term in terms if term))
+
+
+def _key_project_fields(row: dict[str, Any]) -> tuple[str, str, str]:
+    try:
+        raw = json.loads(_text(row.get("raw_json")) or "{}")
+    except (TypeError, ValueError):
+        raw = {}
+    fields = raw.get("fieldValues") if isinstance(raw, dict) else {}
+    fields = fields if isinstance(fields, dict) else {}
+    code = _project_code(fields.get("项目编号"))
+    name = _field_text(fields.get("项目名称")) or _text(row.get("title"))
+    return code, name, _normalized_project_name(name)
+
+
+def _key_project_identity(row: dict[str, Any]) -> tuple[str, str]:
+    code, _, normalized_name = _key_project_fields(row)
+    return code, normalized_name
+
+
+def _teambition_project_identity(project: dict[str, Any]) -> tuple[str, str, float]:
+    codes: list[str] = []
+    progress_candidates: list[float] = []
+    for field in project.get("customfields") or []:
+        if not isinstance(field, dict):
+            continue
+        value = field.get("value")
+        code = _project_code(value)
+        if code:
+            codes.append(code)
+        if _text(field.get("type")).lower() == "number":
+            try:
+                number = float(_field_text(value))
+            except (TypeError, ValueError):
+                continue
+            if 0 <= number <= 100:
+                progress_candidates.append(number)
+    code = codes[0] if len(set(codes)) == 1 else ""
+    progress = progress_candidates[0] if len(progress_candidates) == 1 else -1.0
+    return code, _normalized_project_name(project.get("name")), progress
+
+
+def _match_key_projects(
+    key_records: list[dict[str, Any]], projects: list[dict[str, Any]]
+) -> dict[str, dict[str, str]]:
+    by_code: dict[str, list[dict[str, Any]]] = {}
+    by_name: dict[str, list[dict[str, Any]]] = {}
+    identities: list[tuple[dict[str, Any], str, str]] = []
+    for record in key_records:
+        code, name = _key_project_identity(record)
+        identities.append((record, code, name))
+        if code:
+            by_code.setdefault(code, []).append(record)
+        if name:
+            by_name.setdefault(name, []).append(record)
+
+    project_identities = {
+        _text(project.get("id") or project.get("projectId")): _teambition_project_identity(project)
+        for project in projects
+        if _text(project.get("id") or project.get("projectId"))
+    }
+    tb_code_counts: dict[str, int] = {}
+    tb_name_counts: dict[str, int] = {}
+    for code, name, _ in project_identities.values():
+        if code:
+            tb_code_counts[code] = tb_code_counts.get(code, 0) + 1
+        if name:
+            tb_name_counts[name] = tb_name_counts.get(name, 0) + 1
+
+    matches: dict[str, dict[str, str]] = {}
+    claimed_records: set[str] = set()
+    for project in projects:
+        project_id = _text(project.get("id") or project.get("projectId"))
+        if not project_id:
+            continue
+        code, name, _ = project_identities[project_id]
+        record: dict[str, Any] | None = None
+        match_type = ""
+        if (
+            code
+            and tb_code_counts.get(code) == 1
+            and len(by_code.get(code) or []) == 1
+        ):
+            record = by_code[code][0]
+            match_type = "project_code"
+        elif (
+            name
+            and tb_name_counts.get(name) == 1
+            and len(by_name.get(name) or []) == 1
+        ):
+            record = by_name[name][0]
+            match_type = "project_name"
+        elif name and len(name) >= 8 and tb_name_counts.get(name) == 1:
+            candidates = [
+                item
+                for item, _, source_name in identities
+                if source_name and len(source_name) >= 8 and (source_name in name or name in source_name)
+            ]
+            if len(candidates) == 1:
+                record = candidates[0]
+                match_type = "project_name_contains"
+        record_id = _text((record or {}).get("record_id"))
+        if record and record_id not in claimed_records:
+            claimed_records.add(record_id)
+            matches[project_id] = {
+                "recordId": record_id,
+                "matchType": match_type,
+                "projectCode": code,
+            }
+    return matches
 
 
 class TeambitionService:
@@ -113,66 +267,6 @@ class TeambitionService:
             "source_type": source_type,
         }
 
-    @staticmethod
-    def _source_payload(
-        task: dict[str, Any], employee: dict[str, Any], project_name: str, *, is_parent: bool = False
-    ) -> dict[str, Any]:
-        done = bool(task["is_done"])
-        due_at = from_db(task["due_at"])
-        overdue = bool(due_at and due_at < now_local() and not done)
-        status = "已完成" if done else ("已逾期" if overdue else "进行中")
-        project_label = project_name or task["project_id"] or "未归属项目"
-        progress = f"TB 项目：{project_label}"
-        if done and task["accomplished_at"]:
-            progress += f"；完成于 {task['accomplished_at']}"
-        payload = {
-            "base_id": TEAMBITION_BASE_ID,
-            "table_id": TEAMBITION_TABLE_ID,
-            "table_name": "TB任务",
-            "record_id": task["task_id"],
-            "category_key": "teambition_task",
-            "category_order": 45,
-            "category": "TB任务",
-            "subcategory": project_label,
-            "title": task["content"] or f"TB任务 {task['unique_id'] or task['task_id']}",
-            "status": status,
-            "priority": "高" if int(task["priority"] or 0) >= 2 else ("中" if int(task["priority"] or 0) == 1 else ""),
-            "progress_text": progress,
-            "plan_text": "",
-            "risk_text": "任务已逾期且尚未完成" if overdue else "",
-            "product_manager_user_ids_json": "[]",
-            "project_manager_user_ids_json": json.dumps([task["executor_user_id"]], ensure_ascii=False),
-            "product_manager_names_json": "[]",
-            "project_manager_names_json": json.dumps(
-                [_text(employee.get("employee_name"))] if _text(employee.get("employee_name")) else [],
-                ensure_ascii=False,
-            ),
-            "assignees_json": json.dumps(
-                [
-                    {
-                        "userId": task["executor_user_id"],
-                        "name": _text(employee.get("employee_name")) or task["executor_user_id"],
-                        "role": "TB执行人",
-                    }
-                ]
-                if task["executor_user_id"]
-                else [],
-                ensure_ascii=False,
-                separators=(",", ":"),
-            ),
-            "event_at": task["accomplished_at"] or task["source_updated_at"],
-            "due_at": task["due_at"],
-            "source_created_at": task["source_created_at"],
-            "source_updated_at": task["source_updated_at"],
-            "raw_json": task["raw_json"],
-            "is_deleted": int(task["is_deleted"] or task["is_archived"] or is_parent),
-        }
-        hash_payload = {key: value for key, value in payload.items() if key != "raw_json"}
-        payload["record_hash"] = hashlib.sha256(
-            json.dumps(hash_payload, ensure_ascii=False, sort_keys=True).encode("utf-8")
-        ).hexdigest()
-        return payload
-
     def sync(self, *, actor: str = "manual") -> dict[str, Any]:
         if not self.client.configured():
             raise ValueError("Teambition credentials are not configured")
@@ -206,9 +300,8 @@ class TeambitionService:
         user_map_rows: list[tuple[str, str, str, str, str]] = []
         errors: list[str] = []
         ok_count = 0
-        project_ids: set[str] = set()
         synced_at = to_db(now_local())
-        members_by_user = {_text(item.get("user_id")): item for item in members}
+        teambition_to_dingtalk: dict[str, str] = {}
         for member in members:
             user_id = _text(member.get("user_id"))
             query_user_id = _text(mapped.get(user_id))
@@ -217,40 +310,110 @@ class TeambitionService:
                 user_map_rows.append((user_id, "", "error", error, synced_at))
                 errors.append(f"{user_id}:{error}")
                 continue
+            fetched_by_user[user_id] = set()
+            teambition_to_dingtalk.setdefault(query_user_id, user_id)
+            user_map_rows.append((user_id, query_user_id, "success", "", synced_at))
+            ok_count += 1
+
+        key_records = self.db.fetch_all(
+            """
+            SELECT record_id,title,raw_json FROM source_record
+            WHERE table_id=? AND is_deleted=0
+            """,
+            (KEY_PROJECT_TABLE_ID,),
+        )
+        discovered_projects: dict[str, dict[str, Any]] = {}
+        project_search_error_count = 0
+        for record in key_records:
+            _, project_name, _ = _key_project_fields(record)
+            if not project_name:
+                continue
             try:
-                tasks = self.client.search_executor_tasks(query_user_id)
-                fetched_by_user[user_id] = set()
-                for raw in tasks:
+                _, _, source_name = _key_project_fields(record)
+                for search_term in _project_search_terms(project_name):
+                    found = self.client.search_projects(search_term)
+                    for project in found:
+                        project_id = _text(project.get("id") or project.get("projectId"))
+                        if project_id:
+                            discovered_projects[project_id] = project
+                    if any(
+                        _normalized_project_name(project.get("name")) == source_name
+                        for project in found
+                    ):
+                        break
+            except Exception as exc:
+                project_search_error_count += 1
+                if project_search_error_count <= 5:
+                    errors.append(
+                        f"project-search:{_text(record.get('record_id'))}:{str(exc)[:300]}"
+                    )
+        project_matches = _match_key_projects(key_records, list(discovered_projects.values()))
+        projects = [
+            project
+            for project_id, project in discovered_projects.items()
+            if project_id in project_matches
+        ]
+        existing_projects = {
+            _text(row.get("project_id")): row
+            for row in self.db.fetch_all("SELECT * FROM teambition_project")
+        }
+        status_results: dict[str, tuple[bool, dict[str, Any]]] = {}
+        status_error_count = 0
+        project_task_error_count = 0
+        for project in projects:
+            project_id = _text(project.get("id") or project.get("projectId"))
+            if project_id not in project_matches:
+                continue
+            operator_id = next(
+                (_text(value) for value in project.get("ownerIds") or [] if _text(value)),
+                "",
+            )
+            try:
+                for raw in self.client.query_project_tasks(
+                    project_id,
+                    operator_id=operator_id,
+                ):
+                    teambition_user_id = _text(raw.get("executorId"))
+                    dingtalk_user_id = teambition_to_dingtalk.get(teambition_user_id, "")
+                    if not dingtalk_user_id:
+                        continue
                     values = self._task_values(
                         raw,
-                        dingtalk_user_id=user_id,
-                        teambition_user_id=query_user_id,
+                        dingtalk_user_id=dingtalk_user_id,
+                        teambition_user_id=teambition_user_id,
                         synced_at=synced_at,
                         source_type=source_type,
                     )
                     task_id = values["task_id"]
                     if not task_id:
                         continue
-                    fetched_by_user[user_id].add(task_id)
+                    fetched_by_user[dingtalk_user_id].add(task_id)
                     task_rows[task_id] = values
-                    if values["project_id"]:
-                        project_ids.add(values["project_id"])
-                user_map_rows.append((user_id, query_user_id, "success", "", synced_at))
-                ok_count += 1
             except Exception as exc:
-                error = str(exc)[:500]
-                user_map_rows.append((user_id, query_user_id, "error", error, synced_at))
-                errors.append(f"{user_id}:{error}")
-
-        projects: list[dict[str, Any]] = []
-        if project_ids:
+                project_task_error_count += 1
+                if project_task_error_count <= 5:
+                    errors.append(f"project-tasks:{project_id}:{str(exc)[:300]}")
             try:
-                projects = self.client.query_projects(sorted(project_ids))
+                statuses = self.client.query_project_statuses(
+                    project_id,
+                    operator_id=operator_id,
+                )
+                latest = max(
+                    statuses,
+                    key=lambda item: _source_time(item.get("created")),
+                    default={},
+                )
+                status_results[project_id] = (True, latest)
             except Exception as exc:
-                errors.append(f"projects:{str(exc)[:500]}")
+                status_error_count += 1
+                status_results[project_id] = (False, {})
+                if status_error_count <= 5:
+                    errors.append(f"project-status:{project_id}:{str(exc)[:300]}")
 
         changed_count = 0
         project_count = 0
+        key_project_count = 0
+        project_status_count = 0
         with self.db.transaction() as connection:
             connection.executemany(
                 """
@@ -264,21 +427,106 @@ class TeambitionService:
                 """,
                 user_map_rows,
             )
+            if project_search_error_count == 0:
+                connection.execute(
+                    """
+                    UPDATE teambition_project
+                    SET is_key_project=0,matched_record_id='',match_type=''
+                    WHERE is_key_project=1
+                    """
+                )
             for project in projects:
                 project_id = _text(project.get("id") or project.get("projectId"))
                 if not project_id:
                     continue
+                match = project_matches.get(project_id) or {}
+                project_code, _, progress_percent = _teambition_project_identity(project)
+                existing_project = existing_projects.get(project_id) or {}
+                status_ok, latest_status = status_results.get(project_id, (False, {}))
+                if status_ok:
+                    status_name = _text(latest_status.get("name"))
+                    status_degree = _text(latest_status.get("degree"))
+                    status_content = _text(latest_status.get("content"))[:12000]
+                    status_created_at = _source_time(latest_status.get("created"))
+                else:
+                    status_name = _text(existing_project.get("status_name"))
+                    status_degree = _text(existing_project.get("status_degree"))
+                    status_content = _text(existing_project.get("status_content"))
+                    status_created_at = _text(existing_project.get("status_created_at"))
+                is_key_project = 1 if match else 0
+                if is_key_project:
+                    key_project_count += 1
+                    if status_name or status_content:
+                        project_status_count += 1
+                project_values = {
+                    "name": _text(project.get("name"))[:1000],
+                    "project_code": project_code or _text(match.get("projectCode")),
+                    "progress_percent": progress_percent,
+                    "is_archived": 1 if _truthy(project.get("isArchived")) else 0,
+                    "is_suspended": 1 if _truthy(project.get("isSuspended")) else 0,
+                    "is_key_project": is_key_project,
+                    "matched_record_id": _text(match.get("recordId")),
+                    "match_type": _text(match.get("matchType")),
+                    "start_at": _source_time(project.get("startDate")),
+                    "end_at": _source_time(project.get("endDate")),
+                    "source_updated_at": _source_time(project.get("updated")),
+                    "status_name": status_name,
+                    "status_degree": status_degree,
+                    "status_content": status_content,
+                    "status_created_at": status_created_at,
+                    "raw_json": json.dumps(
+                        {"project": project, "latestStatus": latest_status},
+                        ensure_ascii=False,
+                        separators=(",", ":"),
+                        default=str,
+                    ),
+                }
+                tracked_columns = (
+                    "project_code", "progress_percent", "is_archived", "is_suspended",
+                    "is_key_project", "matched_record_id", "status_name", "status_degree",
+                    "status_content", "status_created_at",
+                )
+                if is_key_project and (
+                    not existing_project
+                    or any(
+                        str(existing_project.get(column) or "")
+                        != str(project_values.get(column) or "")
+                        for column in tracked_columns
+                    )
+                ):
+                    changed_count += 1
                 connection.execute(
                     """
-                    INSERT INTO teambition_project(project_id,name,is_archived,synced_at)
-                    VALUES (?,?,?,?)
+                    INSERT INTO teambition_project(
+                        project_id,name,project_code,progress_percent,is_archived,is_suspended,
+                        is_key_project,matched_record_id,match_type,start_at,end_at,
+                        source_updated_at,status_name,status_degree,status_content,
+                        status_created_at,raw_json,synced_at
+                    ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
                     ON CONFLICT(project_id) DO UPDATE SET name=excluded.name,
-                        is_archived=excluded.is_archived,synced_at=excluded.synced_at
+                        project_code=excluded.project_code,
+                        progress_percent=excluded.progress_percent,
+                        is_archived=excluded.is_archived,
+                        is_suspended=excluded.is_suspended,
+                        is_key_project=excluded.is_key_project,
+                        matched_record_id=excluded.matched_record_id,
+                        match_type=excluded.match_type,
+                        start_at=excluded.start_at,end_at=excluded.end_at,
+                        source_updated_at=excluded.source_updated_at,
+                        status_name=excluded.status_name,
+                        status_degree=excluded.status_degree,
+                        status_content=excluded.status_content,
+                        status_created_at=excluded.status_created_at,
+                        raw_json=excluded.raw_json,synced_at=excluded.synced_at
                     """,
                     (
                         project_id,
-                        _text(project.get("name"))[:1000],
-                        1 if _truthy(project.get("isArchived")) else 0,
+                        *(project_values[column] for column in (
+                            "name", "project_code", "progress_percent", "is_archived",
+                            "is_suspended", "is_key_project", "matched_record_id", "match_type",
+                            "start_at", "end_at", "source_updated_at", "status_name",
+                            "status_degree", "status_content", "status_created_at", "raw_json",
+                        )),
                         synced_at,
                     ),
                 )
@@ -311,104 +559,34 @@ class TeambitionService:
                     """,
                     tuple(task[column] for column in task_columns),
                 )
-            for user_id, task_ids in fetched_by_user.items():
-                if task_ids:
-                    placeholders = ",".join("?" for _ in task_ids)
-                    connection.execute(
-                        f"""
-                        UPDATE teambition_task SET is_deleted=1,synced_at=?
-                        WHERE executor_user_id=? AND is_deleted=0
-                          AND task_id NOT IN ({placeholders})
-                        """,
-                        (synced_at, user_id, *sorted(task_ids)),
-                    )
-                else:
-                    connection.execute(
-                        """
-                        UPDATE teambition_task SET is_deleted=1,synced_at=?
-                        WHERE executor_user_id=? AND is_deleted=0
-                        """,
-                        (synced_at, user_id),
-                    )
+            if project_search_error_count == 0 and project_task_error_count == 0:
+                for user_id, task_ids in fetched_by_user.items():
+                    if task_ids:
+                        placeholders = ",".join("?" for _ in task_ids)
+                        connection.execute(
+                            f"""
+                            UPDATE teambition_task SET is_deleted=1,synced_at=?
+                            WHERE executor_user_id=? AND is_deleted=0
+                              AND task_id NOT IN ({placeholders})
+                            """,
+                            (synced_at, user_id, *sorted(task_ids)),
+                        )
+                    else:
+                        connection.execute(
+                            """
+                            UPDATE teambition_task SET is_deleted=1,synced_at=?
+                            WHERE executor_user_id=? AND is_deleted=0
+                            """,
+                            (synced_at, user_id),
+                        )
 
-            project_names = {
-                _text(row["project_id"]): _text(row["name"])
-                for row in connection.execute("SELECT project_id,name FROM teambition_project")
-            }
-            source_columns = [
-                "base_id", "table_id", "table_name", "record_id", "category_key",
-                "category_order", "category", "subcategory", "title",
-                "status", "priority", "progress_text", "plan_text", "risk_text",
-                "product_manager_user_ids_json", "project_manager_user_ids_json",
-                "product_manager_names_json", "project_manager_names_json", "assignees_json", "event_at",
-                "due_at", "source_created_at", "source_updated_at", "record_hash", "raw_json",
-            ]
-            parent_task_ids = {
-                _text(item.get("parent_task_id"))
-                for item in task_rows.values()
-                if _text(item.get("parent_task_id"))
-            }
-            for task in task_rows.values():
-                employee = members_by_user.get(task["executor_user_id"], {})
-                source = self._source_payload(
-                    task,
-                    employee,
-                    project_names.get(task["project_id"], ""),
-                    is_parent=task["task_id"] in parent_task_ids,
-                )
-                existing = connection.execute(
-                    """
-                    SELECT record_hash,changed_at,is_deleted FROM source_record
-                    WHERE base_id=? AND table_id=? AND record_id=?
-                    """,
-                    (TEAMBITION_BASE_ID, TEAMBITION_TABLE_ID, source["record_id"]),
-                ).fetchone()
-                if not existing:
-                    changed_at = source["source_updated_at"] or source["source_created_at"] or ""
-                elif (
-                    _text(existing["record_hash"]) == source["record_hash"]
-                    and int(existing["is_deleted"] or 0) == source["is_deleted"]
-                ):
-                    changed_at = _text(existing["changed_at"])
-                else:
-                    changed_at = synced_at
-                    changed_count += 1
-                connection.execute(
-                    f"""
-                    INSERT INTO source_record(
-                        {','.join(source_columns)},first_seen_at,last_seen_at,changed_at,is_deleted
-                    ) VALUES ({','.join('?' for _ in source_columns)},?,?,?,?)
-                    ON CONFLICT(base_id,table_id,record_id) DO UPDATE SET
-                        table_name=excluded.table_name,category_key=excluded.category_key,
-                        category_order=excluded.category_order,category=excluded.category,
-                        subcategory=excluded.subcategory,
-                        title=excluded.title,status=excluded.status,priority=excluded.priority,
-                        progress_text=excluded.progress_text,plan_text=excluded.plan_text,
-                        risk_text=excluded.risk_text,
-                        project_manager_user_ids_json=excluded.project_manager_user_ids_json,
-                        project_manager_names_json=excluded.project_manager_names_json,
-                        assignees_json=excluded.assignees_json,
-                        event_at=excluded.event_at,due_at=excluded.due_at,
-                        source_created_at=excluded.source_created_at,
-                        source_updated_at=excluded.source_updated_at,
-                        record_hash=excluded.record_hash,raw_json=excluded.raw_json,
-                        last_seen_at=excluded.last_seen_at,changed_at=excluded.changed_at,
-                        is_deleted=excluded.is_deleted
-                    """,
-                    (
-                        *(source[column] for column in source_columns),
-                        synced_at,
-                        synced_at,
-                        changed_at,
-                        source["is_deleted"],
-                    ),
-                )
+            # TB tasks remain available to the execution dashboard, but they are no
+            # longer independent weekly-report facts. Only matched key-project
+            # status is merged into the corresponding AITable source record later.
             connection.execute(
                 """
                 UPDATE source_record SET is_deleted=1,last_seen_at=?
-                WHERE base_id=? AND table_id=? AND record_id IN (
-                    SELECT task_id FROM teambition_task WHERE is_deleted=1 OR is_archived=1
-                )
+                WHERE base_id=? AND table_id=? AND is_deleted=0
                 """,
                 (synced_at, TEAMBITION_BASE_ID, TEAMBITION_TABLE_ID),
             )
@@ -432,7 +610,18 @@ class TeambitionService:
                 changed_count,
                 project_count,
                 "; ".join(errors)[:2000],
-                json.dumps({"failedUsers": fail_count, "source": source_type}, ensure_ascii=False),
+                json.dumps(
+                    {
+                        "failedUsers": fail_count,
+                        "source": source_type,
+                        "keyProjects": key_project_count,
+                        "projectStatuses": project_status_count,
+                        "projectStatusErrors": status_error_count,
+                        "projectSearchErrors": project_search_error_count,
+                        "projectTaskErrors": project_task_error_count,
+                    },
+                    ensure_ascii=False,
+                ),
                 run_id,
             ),
         )
@@ -446,6 +635,11 @@ class TeambitionService:
             "tasks": len(task_rows),
             "changed": changed_count,
             "projects": project_count,
+            "keyProjects": key_project_count,
+            "projectStatuses": project_status_count,
+            "projectStatusErrors": status_error_count,
+            "projectSearchErrors": project_search_error_count,
+            "projectTaskErrors": project_task_error_count,
             "finishedAt": finished_at,
         }
 
@@ -467,7 +661,13 @@ class TeambitionService:
                 """
             ) or {}
             projects = self.db.fetch_one(
-                "SELECT COUNT(*) AS count FROM teambition_project WHERE is_archived=0"
+                """
+                SELECT COUNT(*) AS count,
+                       SUM(CASE WHEN is_key_project=1 THEN 1 ELSE 0 END) AS key_count,
+                       SUM(CASE WHEN is_key_project=1 AND (status_name<>'' OR status_content<>'')
+                                THEN 1 ELSE 0 END) AS status_count
+                FROM teambition_project WHERE is_archived=0
+                """
             ) or {}
         except Exception:
             latest, counts, projects = None, {}, {}
@@ -479,6 +679,8 @@ class TeambitionService:
             "taskCount": int(counts.get("task_count") or 0),
             "memberCount": int(counts.get("member_count") or 0),
             "projectCount": int(projects.get("count") or 0),
+            "keyProjectCount": int(projects.get("key_count") or 0),
+            "projectStatusCount": int(projects.get("status_count") or 0),
             "syncedAt": _text(counts.get("synced_at")),
             "latestRun": latest or {},
         }
@@ -512,7 +714,8 @@ class TeambitionService:
             FROM teambition_task t
             LEFT JOIN teambition_project p ON p.project_id=t.project_id
             LEFT JOIN employee_cache e ON e.user_id=t.executor_user_id
-            WHERE t.is_deleted=0 AND t.is_archived=0 AND COALESCE(p.is_archived,0)=0
+            WHERE t.is_deleted=0 AND t.is_archived=0
+              AND COALESCE(p.is_archived,0)=0 AND COALESCE(p.is_key_project,0)=1
               AND NOT EXISTS (
                   SELECT 1 FROM teambition_task child
                   WHERE child.parent_task_id=t.task_id AND child.is_deleted=0 AND child.is_archived=0

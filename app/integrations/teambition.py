@@ -301,5 +301,81 @@ class TeambitionClient:
             rows.extend(item for item in (payload.get("result") or []) if isinstance(item, dict))
         return rows
 
+    def search_projects(self, name: str, *, max_pages: int = 20) -> list[dict[str, Any]]:
+        """Search projects by name without enumerating unrelated project details."""
+        normalized_name = _text(name)
+        if not normalized_name or self.source == "dingtalk":
+            return []
+        rows: list[dict[str, Any]] = []
+        next_token = ""
+        for _ in range(max(1, max_pages)):
+            params: dict[str, Any] = {"name": normalized_name, "pageSize": 100}
+            if next_token:
+                params["pageToken"] = next_token
+            payload = self._native_request("/v3/project/query", params=params)
+            rows.extend(item for item in (payload.get("result") or []) if isinstance(item, dict))
+            next_token = _text(payload.get("nextPageToken") or payload.get("nextToken"))
+            if not next_token:
+                return rows
+        raise TeambitionError("Teambition project search pagination exceeded limit")
+
+    def query_project_statuses(
+        self,
+        project_id: str,
+        *,
+        operator_id: str = "",
+        max_pages: int = 20,
+    ) -> list[dict[str, Any]]:
+        """Return project-status history, newest first when provided by Teambition."""
+        normalized_project_id = _text(project_id)
+        if not normalized_project_id or self.source == "dingtalk":
+            return []
+        rows: list[dict[str, Any]] = []
+        next_token = ""
+        for _ in range(max(1, max_pages)):
+            params: dict[str, Any] = {"pageSize": 100}
+            if next_token:
+                params["pageToken"] = next_token
+            payload = self._native_request(
+                f"/v3/project/{normalized_project_id}/status/list",
+                params=params,
+                operator_id=operator_id,
+            )
+            rows.extend(item for item in (payload.get("result") or []) if isinstance(item, dict))
+            next_token = _text(payload.get("nextPageToken") or payload.get("nextToken"))
+            if not next_token:
+                return rows
+        raise TeambitionError("Teambition project status pagination exceeded limit")
+
+    def query_project_tasks(
+        self,
+        project_id: str,
+        *,
+        operator_id: str = "",
+        max_pages: int = 500,
+    ) -> list[dict[str, Any]]:
+        """Read tasks only inside one already-whitelisted project."""
+        normalized_project_id = _text(project_id)
+        if not normalized_project_id or self.source == "dingtalk":
+            return []
+        rows: list[dict[str, Any]] = []
+        next_token = ""
+        for _ in range(max(1, max_pages)):
+            # includeArchived defaults to false; omitting it avoids clients that
+            # serialize Python booleans as the invalid query value "False".
+            params: dict[str, Any] = {"pageSize": 100}
+            if next_token:
+                params["pageToken"] = next_token
+            payload = self._native_request(
+                f"/v3/project/{normalized_project_id}/task/query",
+                params=params,
+                operator_id=operator_id,
+            )
+            rows.extend(item for item in (payload.get("result") or []) if isinstance(item, dict))
+            next_token = _text(payload.get("nextPageToken") or payload.get("nextToken"))
+            if not next_token:
+                return rows
+        raise TeambitionError("Teambition project task pagination exceeded limit")
+
 
 teambition_client = TeambitionClient()

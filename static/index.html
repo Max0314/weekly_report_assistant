@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <meta name="theme-color" content="#f6f8fb">
   <title>产品与项目经理周报助手</title>
-  <link rel="stylesheet" href="static/styles.css?v=20260831c">
+  <link rel="stylesheet" href="static/styles.css?v=20260831d">
 </head>
 <body>
   <div class="app-shell">
@@ -68,7 +68,7 @@
             <div class="hero-copy">
               <span class="hero-kicker">WEEKLY OPERATIONS</span>
               <h2>从事实采集到正式推送，一处完成</h2>
-              <p>周报助手独立读取 AI 多维表、TB 任务和 bi_center 人员目录，保留版本、事实快照与审核痕迹。</p>
+              <p>周报助手独立读取 AI 多维表、重点项目 TB 状态和 bi_center 人员目录，保留版本、事实快照与审核痕迹。</p>
               <div class="actions"><button data-action="sync-source" type="button">同步 AI 表</button><button data-action="sync-teambition" class="secondary" type="button">同步 TB</button><button data-action="sync-directory" class="secondary" type="button">同步人员</button><button data-go="reports" class="ghost" type="button">进入周报工作台</button></div>
             </div>
             <div id="overviewLatest" class="hero-latest"><p class="muted">连接后显示最新周报。</p></div>
@@ -94,7 +94,7 @@
             <section class="panel workflow-panel">
               <div class="section-head"><div><p class="eyebrow">PROCESS</p><h2>标准流程</h2></div></div>
               <ol class="process-list">
-                <li><span>1</span><div><strong>同步事实</strong><p>读取 9 张 AI 表与 TB 任务并固化快照。</p></div></li>
+                <li><span>1</span><div><strong>同步事实</strong><p>读取 9 张 AI 表，并为重点项目补充 TB 状态。</p></div></li>
                 <li><span>2</span><div><strong>生成与修订</strong><p>程序计算指标，按多维表业务分类生成汇总。</p></div></li>
                 <li><span>3</span><div><strong>预览与确认</strong><p>测试目标先看，确认人审核后正式发送。</p></div></li>
               </ol>
@@ -111,7 +111,7 @@
       <section class="page" data-page="teambition" hidden>
         <div class="page-width">
           <section class="page-hero compact-hero">
-            <div><p class="eyebrow">TEAM WORK EXECUTION</p><h2>TB 工作看板</h2><p>沿用 bi_center 的 Teambition 官方只读接口与研发范围，查看执行人任务、项目、逾期和临期情况。</p></div>
+            <div><p class="eyebrow">TEAM WORK EXECUTION</p><h2>TB 重点项目看板</h2><p>仅显示多维表重点项目唯一匹配到的 TB 项目任务、逾期和临期情况。</p></div>
             <div class="actions"><button id="refreshTeambition" class="secondary" type="button">刷新看板</button><button data-action="sync-teambition" type="button">立即同步 TB</button></div>
           </section>
 
@@ -133,10 +133,10 @@
           </section>
 
           <section class="panel">
-            <div class="section-head"><div><p class="eyebrow">SCOPE</p><h2>同步与周报口径</h2><p>默认与 bi_center 一致，只同步研发体系七个部门的执行人任务。</p></div><button id="saveTeambitionConfig" type="button">保存 TB 配置</button></div>
+            <div class="section-head"><div><p class="eyebrow">SCOPE</p><h2>同步与周报口径</h2><p>项目范围以多维表“重点项目跟踪”为唯一白名单；执行人范围沿用研发体系七个部门。</p></div><button id="saveTeambitionConfig" type="button">保存 TB 配置</button></div>
             <div class="toggle-grid">
               <label class="toggle-card"><input id="teambitionSyncEnabled" type="checkbox"><span><strong>启用 TB 自动同步</strong><small>服务器总开关开启后，按间隔刷新只读任务快照。</small></span></label>
-              <label class="toggle-card"><input id="teambitionIncludeInReports" type="checkbox"><span><strong>纳入项目周报</strong><small>把 TB 执行人任务作为项目事实，综合版也会纳入。</small></span></label>
+              <label class="toggle-card"><input id="teambitionIncludeInReports" type="checkbox"><span><strong>补充重点项目状态</strong><small>仅匹配多维表“重点项目跟踪”中的项目，读取 TB 项目状态并补充周报。</small></span></label>
             </div>
             <div class="form-grid two-cols top-gap">
               <label>同步间隔（分钟）<input id="teambitionSyncInterval" type="number" min="15" max="1440"><small class="field-help">与 AI 表同步分开调度；正式推送仍必须人工确认。</small></label>
@@ -365,6 +365,6 @@
     <details id="reportSourceDetails" class="source-details"><summary>查看本版纳入的事实清单</summary><div id="reportSources" class="source-list"></div></details>
   </dialog>
 
-  <script src="static/app.js?v=20260831c"></script>
+  <script src="static/app.js?v=20260831d"></script>
 </body>
 </html>

@@ -15,9 +15,19 @@ from .workflow_config import WorkflowConfigService, workflow_config_service
 REPORT_KINDS = {"combined", "product", "project"}
 PROJECT_TABLE_IDS = {
     str(item["tableId"]) for item in SOURCE_TABLES if item.get("projectView")
-} | {TEAMBITION_TABLE_ID}
+}
+KEY_PROJECT_TABLE_ID = next(
+    str(item["tableId"]) for item in SOURCE_TABLES if item.get("key") == "projects"
+)
 ROSTER_TABLE_IDS = {str(item["tableId"]) for item in SOURCE_TABLES if item.get("roster")}
 FINAL_STATES = {"formal_sent", "recalled", "cancelled"}
+TB_DEGREE_LABELS = {
+    "minor": "轻微",
+    "low": "较低",
+    "normal": "正常",
+    "risky": "风险",
+    "urgent": "紧急",
+}
 
 
 def _json(value: Any, default: Any) -> Any:
@@ -55,6 +65,20 @@ def _normalized_digest(value: Any, *, limit: int = 5) -> str:
 
 def _is_closed(status: str) -> bool:
     return any(flag in str(status or "") for flag in ("已完成", "已结束", "中标成功", "关闭", "取消"))
+
+
+def _tb_status_digest(value: Any, *, limit: int = 480) -> str:
+    text = str(value or "").replace("\r", "\n")
+    fragments: list[str] = []
+    for raw in re.split(r"\n+", text):
+        line = re.sub(r"^(?:[-•*]|[一二三四五六七八九十]+[、.]|\d{1,2}[.、])\s*", "", raw.strip())
+        if not line or re.fullmatch(r"(?:本周重点工作|本周工作|项目进展|风险|下周计划)", line):
+            continue
+        fragments.append(_compact(line, 180))
+        if len("；".join(fragments)) >= limit or len(fragments) >= 4:
+            break
+    digest = "；".join(fragments)
+    return _compact(digest, limit)
 
 
 class ReportService:
@@ -164,6 +188,63 @@ class ReportService:
         item["assignees"] = assignees
         return item
 
+    def _teambition_key_projects(self) -> dict[str, dict[str, Any]]:
+        rows = self.db.fetch_all(
+            """
+            SELECT * FROM teambition_project
+            WHERE is_key_project=1 AND is_archived=0 AND matched_record_id<>''
+            """
+        )
+        result: dict[str, dict[str, Any]] = {}
+        for row in rows:
+            try:
+                progress = float(row.get("progress_percent"))
+            except (TypeError, ValueError):
+                progress = -1
+            progress_value: int | float | None = (
+                None
+                if progress < 0
+                else (int(progress) if progress.is_integer() else progress)
+            )
+            result[str(row.get("matched_record_id") or "")] = {
+                "projectId": str(row.get("project_id") or ""),
+                "name": str(row.get("name") or ""),
+                "projectCode": str(row.get("project_code") or ""),
+                "progressPercent": progress_value,
+                "suspended": bool(row.get("is_suspended")),
+                "startAt": str(row.get("start_at") or ""),
+                "endAt": str(row.get("end_at") or ""),
+                "updatedAt": str(row.get("source_updated_at") or ""),
+                "statusName": str(row.get("status_name") or ""),
+                "statusDegree": str(row.get("status_degree") or ""),
+                "statusDegreeLabel": TB_DEGREE_LABELS.get(
+                    str(row.get("status_degree") or ""),
+                    str(row.get("status_degree") or ""),
+                ),
+                "statusContent": str(row.get("status_content") or ""),
+                "statusSummary": _tb_status_digest(row.get("status_content")),
+                "statusCreatedAt": str(row.get("status_created_at") or ""),
+                "matchType": str(row.get("match_type") or ""),
+            }
+        return result
+
+    @staticmethod
+    def _merge_teambition_project(
+        item: dict[str, Any], project: dict[str, Any] | None
+    ) -> dict[str, Any]:
+        if not project:
+            return item
+        enriched = {**item, "teambitionProject": project}
+        risks: list[str] = [str(item.get("riskText") or "").strip()]
+        if project.get("suspended"):
+            risks.append("TB 项目当前已暂停")
+        if project.get("statusDegree") in {"risky", "urgent"}:
+            status_name = str(project.get("statusName") or "项目状态")
+            degree = str(project.get("statusDegreeLabel") or "风险")
+            risks.append(f"TB {status_name}标记为{degree}")
+        enriched["riskText"] = "；".join(dict.fromkeys(value for value in risks if value))
+        return enriched
+
     def source_items(self, *, period_key: str = "", report_kind: str = "combined") -> tuple[dict[str, Any], list[dict[str, Any]]]:
         if report_kind not in REPORT_KINDS:
             raise ValueError(f"unsupported report kind: {report_kind}")
@@ -179,14 +260,20 @@ class ReportService:
             ORDER BY category_order, table_name, title
             """
         )
+        teambition_projects = (
+            self._teambition_key_projects()
+            if config.get("teambitionIncludeInReports")
+            else {}
+        )
         result: list[dict[str, Any]] = []
         for row in rows:
             item = self._format_source(row)
-            if (
-                item["tableId"] == TEAMBITION_TABLE_ID
-                and not config.get("teambitionIncludeInReports")
-            ):
+            if item["tableId"] == TEAMBITION_TABLE_ID:
                 continue
+            if item["tableId"] == KEY_PROJECT_TABLE_ID:
+                item = self._merge_teambition_project(
+                    item, teambition_projects.get(item["recordId"])
+                )
             if report_kind == "product" and not item["productManagerUserIds"]:
                 continue
             if report_kind == "project" and not (
@@ -197,6 +284,10 @@ class ReportService:
             updated_at = from_db(item["sourceUpdatedAt"])
             changed_at = from_db(item["changedAt"])
             due_at = from_db(item["dueAt"])
+            teambition_status_at = from_db(
+                (item.get("teambitionProject") or {}).get("statusCreatedAt")
+                or (item.get("teambitionProject") or {}).get("updatedAt")
+            )
             status = item["status"]
             include_reasons: list[str] = []
             if event_at and start_at <= event_at <= end_at:
@@ -209,6 +300,8 @@ class ReportService:
                 include_reasons.append("due_soon")
             if item["riskText"] and not _is_closed(status):
                 include_reasons.append("risk_open")
+            if teambition_status_at and start_at <= teambition_status_at <= end_at:
+                include_reasons.append("teambition_project_status")
             if not include_reasons:
                 continue
             item["includeReasons"] = include_reasons
@@ -583,6 +676,20 @@ class ReportService:
             managers = "、".join(item.get("productManagerNames") or item.get("projectManagerNames") or [])
             manager_suffix = f"（{managers}）" if managers else ""
             progress = item.get("progressText") or item.get("status") or "已纳入本周跟踪"
+            teambition = item.get("teambitionProject") or {}
+            if teambition:
+                tb_parts = [
+                    str(teambition.get("statusName") or "").strip(),
+                    (
+                        f"进度 {teambition['progressPercent']}%"
+                        if teambition.get("progressPercent") is not None
+                        else ""
+                    ),
+                    str(teambition.get("statusSummary") or "").strip(),
+                ]
+                tb_status = "；".join(value for value in tb_parts if value)
+                if tb_status:
+                    progress = f"{progress}；TB 项目状态：{tb_status}"
             line = f"【{item.get('category') or '事项'}】{item.get('title') or '未命名事项'}：{progress}{manager_suffix}"
             if item.get("tableId") in PROJECT_TABLE_IDS:
                 project_lines.append(line)

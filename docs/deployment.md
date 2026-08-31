@@ -99,11 +99,11 @@ https://neoflow-cn.neo-net.com/weekly-assistant/api/auth/dingtalk/callback
 ## 健康与诊断
 
 - `/api/health` 仅检查服务与 SQLite。
-- `/api/readiness` 需要有效钉钉管理会话或运维令牌，显示钉钉、AI 表、最近源表快照、bi_center、TB 快照、最近模型连接测试、回调鉴权、公开链接、个人/群目标、归档配置和人员缓存状态，不返回密钥。应用配置齐全但 AI 表或已纳入周报的 TB 快照最近同步失败、无成功成员或过期时，总体状态仍为未就绪。
+- `/api/readiness` 需要有效钉钉管理会话或运维令牌，显示钉钉、AI 表、最近源表快照、bi_center、TB 重点项目状态、最近模型连接测试、回调鉴权、公开链接、个人/群目标、归档配置和人员缓存状态，不返回密钥。应用配置齐全但 AI 表或已启用的 TB 重点项目状态最近同步失败、无可用匹配或过期时，总体状态仍为未就绪。
 - `/api/model-config` 需要管理令牌，返回当前模型、来源与脱敏 Key；连接测试可使用未保存候选配置，留空 Key 时安全复用当前生效 Key。
 - `/api/teambition/status`、`/api/teambition/dashboard` 和 `POST /api/sync/teambition` 均需要管理令牌；状态接口只返回来源、配置布尔值、数量和最近批次，不返回 App ID、Secret、组织 ID 或访问令牌。
 - `/api/coverage` 显示预期产品/项目经理与本周有效事项覆盖；`POST /api/coverage/remind` 仅在管理员确认后发送一次性缺报单聊。
-- `sync_run` 保存逐表同步结果；`teambition_sync_run` 保存 TB 成员级批次摘要。AI 表最新同步失败/过期/空快照，或已纳入周报的 TB 最新批次失败/过期/无成功成员时，自动生成和自动预览会被阻断；关闭自动同步不会绕过该门禁，只能手动刷新快照或明确关闭“纳入项目周报”。
+- `sync_run` 保存逐表同步结果；`teambition_sync_run` 保存 TB 批次及重点项目匹配摘要。AI 表最新同步失败/过期/空快照，或已启用的 TB 最新批次失败/过期时，自动生成和自动预览会被阻断；关闭自动同步不会绕过该门禁，只能手动刷新快照或明确关闭“补充重点项目状态”。
 - `job_status` 保存调度失败及重试次数；机器人事件和推送日志只在管理接口可见。
 - 外部接口失败时不删除上一版快照；正式推送失败进入 `retryable_error`。
 
@@ -122,9 +122,9 @@ https://neoflow-cn.neo-net.com/weekly-assistant/api/auth/dingtalk/callback
 - `source_record.assignees_json TEXT NOT NULL DEFAULT '[]'`
 - `employee_cache` 增加工号、主部门 ID、任职来源、负责人标志与负责人范围字段
 - 新建 `organization_cache` 和 `employee_org_relation_cache` 两张可重建缓存表
-- 新建 `teambition_task`、`teambition_project`、`teambition_user_map` 和 `teambition_sync_run` 四张 TB 缓存/审计表；并以 `source_record.table_id=teambition_tasks` 保存叶子任务周报投影
+- 新建 `teambition_task`、`teambition_project`、`teambition_user_map` 和 `teambition_sync_run` 四张 TB 缓存/审计表；`teambition_project` 增加重点项目匹配、进度和项目状态字段。历史 `source_record.table_id=teambition_tasks` 投影会在下一次 TB 同步时停用，不再进入新周报
 
-影响：已有周报内容、状态和发送日志不变；来源新增字段使用空值或 `999`，部署后的下一次正式 AI 表/TB 同步会按真实字段补齐，不会伪造历史分类。已有事实快照不改写；没有历史事实快照的旧周报继续按兼容逻辑读取当前源记录，新生成周报保存分类、负责人角色和覆盖清单。个人周报由现有快照实时派生，不新增表或重复数据。员工新增字段初值为空，下一次目录同步会事务性填充员工、组织和关系缓存，不修改 bi_center 数据。TB 新表初始为空，只有管理员手动同步或显式打开部署总开关后才会写入；不会自动回填历史周报。
+影响：已有周报内容、状态、事实快照和发送日志不变；`teambition_project` 新字段以空值、`0` 或 `-1` 初始化，部署后的下一次正式 AI 表/TB 同步仅为当前多维表重点项目补齐真实状态，不会回写或伪造历史周报。个人周报继续由生成时快照实时派生。回滚旧镜像时新增列会被忽略，既有项目、任务、人员和发送数据不丢失。
 
 ## 回滚
 

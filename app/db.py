@@ -153,7 +153,21 @@ CREATE INDEX IF NOT EXISTS idx_teambition_task_parent ON teambition_task(parent_
 CREATE TABLE IF NOT EXISTS teambition_project (
     project_id TEXT PRIMARY KEY,
     name TEXT NOT NULL DEFAULT '',
+    project_code TEXT NOT NULL DEFAULT '',
+    progress_percent REAL NOT NULL DEFAULT -1,
     is_archived INTEGER NOT NULL DEFAULT 0,
+    is_suspended INTEGER NOT NULL DEFAULT 0,
+    is_key_project INTEGER NOT NULL DEFAULT 0,
+    matched_record_id TEXT NOT NULL DEFAULT '',
+    match_type TEXT NOT NULL DEFAULT '',
+    start_at TEXT NOT NULL DEFAULT '',
+    end_at TEXT NOT NULL DEFAULT '',
+    source_updated_at TEXT NOT NULL DEFAULT '',
+    status_name TEXT NOT NULL DEFAULT '',
+    status_degree TEXT NOT NULL DEFAULT '',
+    status_content TEXT NOT NULL DEFAULT '',
+    status_created_at TEXT NOT NULL DEFAULT '',
+    raw_json TEXT NOT NULL DEFAULT '{}',
     synced_at TEXT NOT NULL
 );
 
@@ -325,6 +339,36 @@ class Database:
                 connection.execute(f"ALTER TABLE source_record ADD COLUMN {column} {definition}")
         connection.execute(
             "CREATE INDEX IF NOT EXISTS idx_source_record_category ON source_record(category_order, category_key, is_deleted)"
+        )
+
+        teambition_project_columns = {
+            str(row["name"])
+            for row in connection.execute("PRAGMA table_info(teambition_project)").fetchall()
+        }
+        teambition_project_additions = {
+            "project_code": "TEXT NOT NULL DEFAULT ''",
+            "progress_percent": "REAL NOT NULL DEFAULT -1",
+            "is_suspended": "INTEGER NOT NULL DEFAULT 0",
+            "is_key_project": "INTEGER NOT NULL DEFAULT 0",
+            "matched_record_id": "TEXT NOT NULL DEFAULT ''",
+            "match_type": "TEXT NOT NULL DEFAULT ''",
+            "start_at": "TEXT NOT NULL DEFAULT ''",
+            "end_at": "TEXT NOT NULL DEFAULT ''",
+            "source_updated_at": "TEXT NOT NULL DEFAULT ''",
+            "status_name": "TEXT NOT NULL DEFAULT ''",
+            "status_degree": "TEXT NOT NULL DEFAULT ''",
+            "status_content": "TEXT NOT NULL DEFAULT ''",
+            "status_created_at": "TEXT NOT NULL DEFAULT ''",
+            "raw_json": "TEXT NOT NULL DEFAULT '{}'",
+        }
+        for column, definition in teambition_project_additions.items():
+            if column not in teambition_project_columns:
+                connection.execute(
+                    f"ALTER TABLE teambition_project ADD COLUMN {column} {definition}"
+                )
+        connection.execute(
+            "CREATE INDEX IF NOT EXISTS idx_teambition_project_key "
+            "ON teambition_project(is_key_project, matched_record_id)"
         )
 
         employee_columns = {

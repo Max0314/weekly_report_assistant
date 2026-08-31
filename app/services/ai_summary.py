@@ -113,6 +113,19 @@ class AISummaryClient:
                 "dueAt": item.get("dueAt"),
                 **(
                     {
+                        "teambitionProjectStatus": {
+                            "name": clipped((item.get("teambitionProject") or {}).get("statusName")),
+                            "degree": clipped((item.get("teambitionProject") or {}).get("statusDegreeLabel")),
+                            "progressPercent": (item.get("teambitionProject") or {}).get("progressPercent"),
+                            "content": clipped((item.get("teambitionProject") or {}).get("statusContent")),
+                            "createdAt": (item.get("teambitionProject") or {}).get("statusCreatedAt"),
+                        }
+                    }
+                    if item.get("teambitionProject")
+                    else {}
+                ),
+                **(
+                    {
                         "productManagers": item.get("productManagerNames"),
                         "projectManagers": item.get("projectManagerNames"),
                     }
@@ -122,7 +135,10 @@ class AISummaryClient:
             for item in prioritized
         ]
         prompt = {
-            "task": "基于按多维表业务分类的事实生成团队周报管理摘要，只能归纳，不得新增事实或数字。",
+            "task": (
+                "基于按多维表业务分类的事实生成团队周报管理摘要，只能归纳，不得新增事实或数字。"
+                "Teambition 仅作为多维表重点项目的项目状态补充，不得单独生成 TB 任务或扩大项目范围。"
+            ),
             "window": window,
             "metrics": metrics,
             "facts": facts,

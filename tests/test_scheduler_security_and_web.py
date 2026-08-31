@@ -81,7 +81,7 @@ class SchedulerSecurityAndWebTests(unittest.TestCase):
         self.assertFalse(ready)
         self.assertEqual("upstream failed", reason)
 
-    def test_teambition_snapshot_requires_fresh_successful_members(self) -> None:
+    def test_teambition_snapshot_requires_fresh_matched_projects(self) -> None:
         scheduler = SchedulerService(database=self.db)
         now = datetime(2026, 8, 13, 12, 0, tzinfo=SHANGHAI)
         ready, reason = scheduler._teambition_snapshot_ready(now, freshness_hours=26)
@@ -91,10 +91,10 @@ class SchedulerSecurityAndWebTests(unittest.TestCase):
         self.db.execute(
             """
             INSERT INTO teambition_sync_run(
-              actor,source_type,status,started_at,finished_at,member_count,ok_count
-            ) VALUES ('scheduler','native','success',?,?,?,?)
+              actor,source_type,status,started_at,finished_at,member_count,ok_count,project_count
+            ) VALUES ('scheduler','native','success',?,?,?,?,?)
             """,
-            (to_db(now), to_db(now), 3, 3),
+            (to_db(now), to_db(now), 3, 3, 1),
         )
         ready, reason = scheduler._teambition_snapshot_ready(now, freshness_hours=26)
         self.assertTrue(ready, reason)
@@ -103,10 +103,10 @@ class SchedulerSecurityAndWebTests(unittest.TestCase):
         self.db.execute(
             """
             INSERT INTO teambition_sync_run(
-              actor,source_type,status,started_at,finished_at,member_count,ok_count
-            ) VALUES ('scheduler','native','partial',?,?,?,?)
+              actor,source_type,status,started_at,finished_at,member_count,ok_count,project_count
+            ) VALUES ('scheduler','native','partial',?,?,?,?,?)
             """,
-            (to_db(stale), to_db(stale), 3, 2),
+            (to_db(stale), to_db(stale), 3, 2, 1),
         )
         ready, reason = scheduler._teambition_snapshot_ready(now, freshness_hours=26)
         self.assertFalse(ready)
@@ -198,6 +198,41 @@ class SchedulerSecurityAndWebTests(unittest.TestCase):
         )
         self.assertIsNotNone(category_index)
 
+    def test_additive_migration_upgrades_teambition_project_status_cache(self) -> None:
+        path = Path(self.temp_dir.name) / "old-teambition.db"
+        connection = sqlite3.connect(path)
+        connection.execute(
+            """
+            CREATE TABLE teambition_project (
+              project_id TEXT PRIMARY KEY, name TEXT, is_archived INTEGER, synced_at TEXT
+            )
+            """
+        )
+        connection.execute(
+            "INSERT INTO teambition_project VALUES ('project-1','项目一',0,'2026-08-01')"
+        )
+        connection.commit()
+        connection.close()
+        database = Database(path)
+        database.initialize()
+        with database.connect() as upgraded:
+            columns = {
+                str(row["name"])
+                for row in upgraded.execute("PRAGMA table_info(teambition_project)")
+            }
+            preserved = upgraded.execute(
+                "SELECT name,status_name,is_key_project FROM teambition_project WHERE project_id='project-1'"
+            ).fetchone()
+        self.assertTrue(
+            {
+                "project_code", "progress_percent", "is_key_project", "matched_record_id",
+                "status_name", "status_degree", "status_content", "status_created_at",
+            }.issubset(columns)
+        )
+        self.assertEqual("项目一", preserved["name"])
+        self.assertEqual("", preserved["status_name"])
+        self.assertEqual(0, preserved["is_key_project"])
+
     def test_production_callback_fails_closed_without_a_token(self) -> None:
         test_app = FastAPI()
         test_app.include_router(router)
@@ -236,8 +271,8 @@ class SchedulerSecurityAndWebTests(unittest.TestCase):
         self.assertIn('api("/api/config"', script)
         self.assertIn('api("/api/model-config"', script)
         self.assertIn('api("/api/model-config/test"', script)
-        self.assertIn("styles.css?v=20260831c", html)
-        self.assertIn("app.js?v=20260831c", html)
+        self.assertIn("styles.css?v=20260831d", html)
+        self.assertIn("app.js?v=20260831d", html)
         self.assertIn('data-route="personal-reports"', html)
         self.assertIn('data-page="personal-reports"', html)
         self.assertIn('id="cancelSections"', html)

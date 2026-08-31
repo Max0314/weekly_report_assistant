@@ -115,7 +115,7 @@ class SchedulerService:
     ) -> tuple[bool, str]:
         latest = self.db.fetch_one(
             """
-            SELECT status,finished_at,member_count,ok_count,error_text
+            SELECT status,finished_at,project_count,error_text
             FROM teambition_sync_run ORDER BY id DESC LIMIT 1
             """
         )
@@ -128,8 +128,8 @@ class SchedulerService:
             return False, "latest Teambition sync has no completion timestamp"
         if now - finished_at > timedelta(hours=max(1, int(freshness_hours))):
             return False, "latest Teambition snapshot is stale"
-        if int(latest.get("member_count") or 0) <= 0 or int(latest.get("ok_count") or 0) <= 0:
-            return False, "latest Teambition snapshot has no successfully synced members"
+        if int(latest.get("project_count") or 0) <= 0:
+            return False, "latest Teambition snapshot has no matched key projects"
         return True, ""
 
     def tick(self, reference: datetime | None = None) -> list[dict[str, Any]]:

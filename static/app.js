@@ -14,7 +14,7 @@
   ];
   const ROUTES = {
     overview: {eyebrow: "WORKSPACE", title: "工作台概览", subtitle: "掌握数据、生成、审核与推送状态"},
-    teambition: {eyebrow: "TEAM WORK EXECUTION", title: "TB 工作看板", subtitle: "项目任务、执行人、逾期与临期状态"},
+    teambition: {eyebrow: "TEAM WORK EXECUTION", title: "TB 重点项目看板", subtitle: "仅展示多维表重点项目匹配到的任务与项目状态"},
     reports: {eyebrow: "REPORT CENTER", title: "周报展示", subtitle: "当前成稿、正式周报与历史版本"},
     "personal-reports": {eyebrow: "PERSONAL WEEKLY", title: "个人周报", subtitle: "我的总结与授权成员明细"},
     "report-config": {eyebrow: "REPORT SETTINGS", title: "周报配置", subtitle: "周期口径、项目背景与存档规则"},
@@ -54,6 +54,7 @@
 
   const resolveUrl = (path) => new URL(String(path || "").replace(/^\//, ""), appBaseUrl).toString();
   const escapeHtml = (value) => String(value ?? "").replace(/[&<>"']/g, (char) => ({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"}[char]));
+  const escapeMultiline = (value) => escapeHtml(value).replace(/\r?\n/g, "<br>");
   const setValue = (selector, value) => { const element = $(selector); if (element) element.value = value ?? ""; };
   const setChecked = (selector, value) => { const element = $(selector); if (element) element.checked = Boolean(value); };
   const toInt = (value, fallback = 0) => Number.isFinite(Number(value)) ? Number(value) : fallback;
@@ -119,7 +120,7 @@
     if (!data || typeof data !== "object") return "操作已完成。";
     if (data.report?.id) return `周报 #${data.report.id}，成功 ${data.sent ?? data.recalled ?? 0}，失败 ${data.failed ?? 0}`;
     if (data.id && data.title) return `周报 #${data.id} ${data.title}`;
-    if (data.tasks != null && data.members != null) return `同步 ${data.members} 人、${data.tasks} 条 TB 任务，失败 ${data.fail || 0}`;
+    if (data.tasks != null && data.members != null) return `匹配 ${data.keyProjects || 0} 个重点项目、读取 ${data.projectStatuses || 0} 条项目状态`;
     if (data.runId) return `同步 ${data.tableCount || 0} 张表、${data.recordCount || 0} 条记录`;
     if (data.count != null) return `处理 ${data.count} 条记录`;
     if (data.message) return String(data.message);
@@ -192,7 +193,7 @@
       checkCard("管理端登录", c.adminSso ? "ok" : "neutral", c.adminSso ? "钉钉 OAuth" : "运维令牌兜底"),
       checkCard("AI 多维表", c.sourceData?.ready ? "ok" : "bad", c.sourceData?.reason || "最近同步成功"),
       checkCard("人员目录", c.biCenter ? "ok" : "bad", `${c.directoryCache?.count || 0} 人`),
-      checkCard("TB 任务", c.teambition?.ready ? "ok" : (c.teambition?.required ? "bad" : "neutral"), c.teambition?.configured ? `${c.teambition?.taskCount || 0} 条` : "未配置密钥"),
+      checkCard("TB 重点项目", c.teambition?.ready ? "ok" : (c.teambition?.required ? "bad" : "neutral"), c.teambition?.configured ? `匹配 ${c.teambition?.keyProjectCount || 0} · 状态 ${c.teambition?.projectStatusCount || 0}` : "未配置密钥"),
       checkCard("AI 摘要", c.aiSummary ? "ok" : (aiDetail.configured ? "neutral" : "bad"), c.aiSummary ? "连接通过" : (aiDetail.error || "未配置")),
       checkCard("推送目标", c.deliveryTargets?.ready ? "ok" : "bad", `测试 ${c.deliveryTargets?.preview || 0} / 正式 ${c.deliveryTargets?.formal || 0}`),
       checkCard("回调鉴权", c.callbackAuth ? "ok" : "bad"),
@@ -341,9 +342,12 @@
       const categoryItems = items.filter((item) => String(item.categoryKey || item.tableId) === String(section.key));
       const subtypeChips = Object.entries(section.bySubcategory || {}).map(([name, count]) => `<span>${escapeHtml(name)} ${count}</span>`).join("");
       return `<section class="panel personal-category"><div class="personal-category-head"><div><p class="eyebrow">${String(section.order || "").padStart(2, "0")}</p><h2>${escapeHtml(section.label || "未分类")}</h2></div><div class="personal-category-count"><strong>${section.itemCount || 0}</strong><span>项工作</span></div></div>${subtypeChips ? `<div class="personal-subtypes">${subtypeChips}</div>` : ""}<div class="personal-item-list">${categoryItems.map((item) => {
-        const tags = [...(item.roles || []), item.subcategory, item.status || "未标记", item.priority ? `${item.priority}优先级` : ""].filter(Boolean);
+        const tbProject = item.teambitionProject || null;
+        const tags = [...(item.roles || []), item.subcategory, item.status || "未标记", item.priority ? `${item.priority}优先级` : "", tbProject?.statusName ? `TB · ${tbProject.statusName}` : ""].filter(Boolean);
         const dates = [item.eventAt ? `业务日期 ${String(item.eventAt).split("T")[0]}` : "", item.dueAt ? `截止 ${String(item.dueAt).split("T")[0]}` : ""].filter(Boolean).join(" · ");
-        return `<article class="personal-item"><div class="personal-item-title"><h3>${escapeHtml(item.title || "未命名事项")}</h3><div>${tags.map((tag) => `<span>${escapeHtml(tag)}</span>`).join("")}</div></div>${item.progressText ? `<p><strong>本周进展</strong>${escapeHtml(item.progressText)}</p>` : ""}${item.planText ? `<p><strong>下周计划</strong>${escapeHtml(item.planText)}</p>` : ""}${item.riskText ? `<p class="personal-risk"><strong>风险提示</strong>${escapeHtml(item.riskText)}</p>` : ""}${dates ? `<small>${escapeHtml(dates)}</small>` : ""}</article>`;
+        const tbMeta = tbProject ? [tbProject.statusName, tbProject.statusDegreeLabel, tbProject.progressPercent != null ? `进度 ${tbProject.progressPercent}%` : "", tbProject.statusCreatedAt ? `更新 ${String(tbProject.statusCreatedAt).split("T")[0]}` : ""].filter(Boolean).join(" · ") : "";
+        const tbDetails = tbProject ? `<details class="personal-tb-status"><summary><span><strong>TB 项目状态</strong><small>${escapeHtml(tbMeta || "已关联重点项目")}</small></span><em>${tbProject.statusContent ? "查看详情" : "暂无状态正文"}</em></summary>${tbProject.statusContent ? `<div>${escapeMultiline(tbProject.statusContent)}</div>` : ""}</details>` : "";
+        return `<article class="personal-item"><div class="personal-item-title"><h3>${escapeHtml(item.title || "未命名事项")}</h3><div>${tags.map((tag) => `<span>${escapeHtml(tag)}</span>`).join("")}</div></div>${item.progressText ? `<p><strong>本周进展</strong>${escapeHtml(item.progressText)}</p>` : ""}${item.planText ? `<p><strong>下周计划</strong>${escapeHtml(item.planText)}</p>` : ""}${item.riskText ? `<p class="personal-risk"><strong>风险提示</strong>${escapeHtml(item.riskText)}</p>` : ""}${tbDetails}${dates ? `<small>${escapeHtml(dates)}</small>` : ""}</article>`;
       }).join("")}</div></section>`;
     }).join("") : '<div class="empty-state"><strong>本周期暂无个人事项</strong><p>团队周报已生成，但没有匹配到该成员的责任人字段。</p></div>';
   };
@@ -938,7 +942,9 @@
     const personalMember = event.target.closest("[data-personal-user-id]");
     if (personalMember) {
       activePersonalUserId = personalMember.dataset.personalUserId;
-      run("查看成员周报", () => loadPersonalReport(undefined, activePersonalUserId), {refresh: false});
+      run("查看成员周报", () => loadPersonalReport(undefined, activePersonalUserId), {refresh: false}).then((data) => {
+        if (data) $("#personalHero")?.scrollIntoView({behavior: "smooth", block: "start"});
+      });
       return;
     }
     if (!reportButton) return;
