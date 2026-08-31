@@ -184,17 +184,43 @@ textarea { min-height: 112px; resize: vertical; line-height: 1.6; }
 .report-more > summary::-webkit-details-marker { display: none; }
 .report-more-menu { position: absolute; top: calc(100% + 7px); right: 0; z-index: 8; display: grid; min-width: 150px; gap: 6px; padding: 8px; border: 1px solid var(--line); border-radius: 11px; background: #fff; box-shadow: 0 16px 36px rgba(23, 32, 51, .16); }
 .report-more-menu button { width: 100%; white-space: nowrap; }
-.personal-page-width { max-width: 1260px; }
-.personal-layout { display: grid; grid-template-columns: minmax(210px, 250px) minmax(0, 1fr); gap: 16px; align-items: start; }
-.personal-members-panel { position: sticky; top: calc(var(--header-height) + 18px); display: flex; max-height: calc(100vh - var(--header-height) - 36px); flex-direction: column; padding: 18px; overflow: hidden; }
-.personal-member-list { display: grid; min-height: 0; gap: 8px; margin-top: 14px; padding-right: 4px; overflow-y: auto; overscroll-behavior: contain; scrollbar-gutter: stable; }
-.personal-member { display: flex; align-items: center; justify-content: space-between; gap: 10px; width: 100%; padding: 11px 12px; color: #42526b; border: 1px solid var(--line); background: #fff; text-align: left; }
-.personal-member:hover:not(:disabled) { color: #224f9f; background: #f5f8ff; }
-.personal-member.active { color: #1749ae; border-color: #aac4f2; background: var(--blue-soft); box-shadow: 0 7px 18px rgba(40, 100, 220, .1); }
-.personal-member span, .personal-member strong, .personal-member small { display: block; min-width: 0; }
-.personal-member strong { overflow: hidden; font-size: 13px; text-overflow: ellipsis; white-space: nowrap; }
-.personal-member small { margin-top: 3px; color: var(--muted); font-size: 10px; font-weight: 500; }
-.personal-member em { display: grid; min-width: 28px; height: 28px; place-items: center; color: #315a9e; border-radius: 999px; background: #e7effd; font-size: 10px; font-style: normal; font-weight: 800; }
+.personal-page-width { max-width: 1280px; }
+.personal-layout { display: grid; grid-template-columns: minmax(250px, 280px) minmax(0, 1fr); gap: 18px; align-items: start; }
+.personal-members-panel { position: sticky; top: calc(var(--header-height) + 18px); display: flex; max-height: calc(100vh - var(--header-height) - 36px); flex-direction: column; margin-bottom: 0; padding: 18px; overflow: hidden; }
+.personal-member-panel-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.personal-member-panel-head h2 { margin: 2px 0 0; color: #1d3f70; font-size: 18px; }
+.personal-member-count { display: inline-flex; align-items: center; min-height: 26px; padding: 5px 9px; color: #315d94; border: 1px solid #d9e6f5; border-radius: 999px; background: #f2f7fc; font-size: 10px; font-weight: 800; white-space: nowrap; }
+.personal-member-hint { min-height: 34px; margin: 9px 0 0; color: var(--muted); font-size: 10px; line-height: 1.65; }
+.personal-member-search { position: relative; display: block; margin-top: 13px; }
+.personal-member-search > span::before { position: absolute; top: 50%; left: 12px; z-index: 1; width: 11px; height: 11px; content: ""; border: 1.7px solid #8494a9; border-radius: 50%; transform: translateY(-62%); pointer-events: none; }
+.personal-member-search > span::after { position: absolute; top: calc(50% + 4px); left: 22px; z-index: 1; width: 6px; height: 1.7px; content: ""; border-radius: 2px; background: #8494a9; transform: rotate(45deg); transform-origin: left center; pointer-events: none; }
+.personal-member-search input { height: 38px; margin: 0; padding: 9px 12px 9px 34px; border-color: #dce5ef; border-radius: 11px; background: #f8fafc; font-size: 11px; }
+.personal-member-search input:focus { background: #fff; }
+.personal-member-list { display: grid; min-height: 0; gap: 8px; margin-top: 12px; padding-right: 4px; overflow-y: auto; overscroll-behavior: contain; scrollbar-gutter: stable; }
+.personal-member { position: relative; display: grid; grid-template-columns: 36px minmax(0, 1fr) auto; align-items: center; gap: 10px; width: 100%; min-height: 70px; padding: 10px; overflow: hidden; color: #42526b; border: 1px solid #e0e7ef; border-radius: 13px; background: #fff; text-align: left; }
+.personal-member::before { position: absolute; inset: 9px auto 9px 0; width: 3px; content: ""; border-radius: 0 3px 3px 0; background: transparent; }
+.personal-member:hover:not(:disabled) { color: #224f9f; border-color: #c4d7ee; background: #f7faff; box-shadow: 0 8px 20px rgba(35, 75, 126, .08); }
+.personal-member.active { color: #1749ae; border-color: #9dbbea; background: linear-gradient(135deg, #f1f6ff, #f5fbfb); box-shadow: 0 9px 22px rgba(40, 100, 180, .12); }
+.personal-member.active::before { background: linear-gradient(#2f69bd, #0f8a82); }
+.personal-member-avatar { display: grid; width: 36px; height: 36px; place-items: center; color: #fff; border-radius: 11px; background: linear-gradient(135deg, #4878bd, #27578f); font-size: 13px; font-weight: 850; }
+.personal-member[data-tone="1"] .personal-member-avatar { background: linear-gradient(135deg, #2e8a83, #176a67); }
+.personal-member[data-tone="2"] .personal-member-avatar { background: linear-gradient(135deg, #7667ad, #544587); }
+.personal-member[data-tone="3"] .personal-member-avatar { background: linear-gradient(135deg, #b16e49, #8b4e33); }
+.personal-member-main, .personal-member-name, .personal-member-total { display: block; min-width: 0; }
+.personal-member-name { display: flex; align-items: center; gap: 5px; }
+.personal-member-name strong { overflow: hidden; color: #223e62; font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
+.personal-member-name i { flex: 0 0 auto; padding: 2px 5px; color: #2563a7; border-radius: 999px; background: #e2edfb; font-size: 8px; font-style: normal; font-weight: 800; }
+.personal-member-main > small, .personal-member-role { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.personal-member-main > small { margin-top: 3px; color: #718197; font-size: 9px; font-weight: 550; }
+.personal-member-role { margin-top: 4px; color: #8a97a8; font-size: 8px; font-weight: 650; }
+.personal-member-total { min-width: 30px; color: #71839a; text-align: center; }
+.personal-member-total strong, .personal-member-total small { display: block; }
+.personal-member-total strong { color: #275d9f; font-size: 15px; line-height: 1; }
+.personal-member-total small { margin-top: 3px; font-size: 8px; }
+.personal-member-empty { padding: 22px 10px; color: var(--muted); text-align: center; }
+.personal-member-empty strong, .personal-member-empty span { display: block; }
+.personal-member-empty strong { color: #53657d; font-size: 12px; }
+.personal-member-empty span { margin-top: 5px; font-size: 9px; line-height: 1.6; }
 .personal-report-column { display: grid; width: 100%; max-width: 940px; min-width: 0; justify-self: end; gap: 16px; }
 .personal-hero { display: flex; align-items: center; justify-content: space-between; gap: 18px; min-height: 136px; padding: 24px 27px; color: #fff; border-radius: 18px; background: linear-gradient(135deg, #173b68, #24689d 56%, #0f8a82); box-shadow: var(--shadow); scroll-margin-top: calc(var(--header-height) + 18px); }
 .personal-hero span, .personal-hero h2, .personal-hero p { display: block; margin: 0; }
@@ -435,9 +461,8 @@ dialog::backdrop { background: rgba(20, 29, 44, .58); backdrop-filter: blur(3px)
   .personal-page-width { max-width: 760px; }
   .personal-layout { grid-template-columns: minmax(0, 1fr); }
   .personal-report-column { max-width: none; justify-self: stretch; }
-  .personal-members-panel { position: static; display: block; min-width: 0; max-height: none; overflow: hidden; }
-  .personal-member-list { display: flex; width: 100%; max-height: none; padding: 0 0 4px; overflow-x: auto; overflow-y: hidden; overscroll-behavior-x: contain; scrollbar-gutter: auto; }
-  .personal-member { flex: 0 0 min(215px, 78vw); }
+  .personal-members-panel { position: static; display: flex; min-width: 0; max-height: none; overflow: hidden; }
+  .personal-member-list { grid-template-columns: repeat(2, minmax(0, 1fr)); width: 100%; max-height: 292px; padding: 0 4px 4px 0; overflow-x: hidden; overflow-y: auto; overscroll-behavior-y: contain; scrollbar-gutter: stable; }
   .personal-chart-grid { grid-template-columns: 1fr; }
   .checks { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .page-hero, .report-toolbar { align-items: stretch; flex-direction: column; }
@@ -464,6 +489,7 @@ dialog::backdrop { background: rgba(20, 29, 44, .58); backdrop-filter: blur(3px)
   .hero-copy .actions button { flex: 1 1 auto; }
   .metric-grid, .checks, .toggle-grid { grid-template-columns: 1fr; }
   .personal-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .personal-member-list { grid-template-columns: 1fr; max-height: 278px; }
   .personal-hero { align-items: flex-start; flex-direction: column; padding: 22px; }
   .personal-hero-actions { width: 100%; justify-content: flex-start; }
   .personal-progress-chart { justify-content: flex-start; }

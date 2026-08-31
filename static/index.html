@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <meta name="theme-color" content="#f6f8fb">
   <title>产品与项目经理周报助手</title>
-  <link rel="stylesheet" href="static/styles.css?v=20260831f">
+  <link rel="stylesheet" href="static/styles.css?v=20260831g">
 </head>
 <body>
   <div class="app-shell">
@@ -185,12 +185,14 @@
       <section class="page" data-page="personal-reports" hidden>
         <div class="page-width personal-page-width">
           <section class="page-hero compact-hero">
-            <div><p class="eyebrow">PERSONAL WEEKLY</p><h2>个人周报</h2><p>默认查看本人；周报确认人和组织负责人可点击查看授权范围内的成员。</p></div>
+            <div><p class="eyebrow">PERSONAL WEEKLY</p><h2>个人周报</h2><p>本人有本周事项时默认查看本人；本人无事项时自动展示首位可查看成员。</p></div>
             <div class="actions"><select id="personalReportPeriod" aria-label="选择周报周期"><option value="">暂无综合周报</option></select><button id="refreshPersonalReport" class="secondary" type="button">刷新</button></div>
           </section>
           <div class="personal-layout">
             <aside class="panel personal-members-panel">
-              <div class="section-head"><div><p class="eyebrow">MEMBERS</p><h2>对应成员</h2><p id="personalMemberHint">登录后显示本人和可查看成员。</p></div></div>
+              <div class="personal-member-panel-head"><div><p class="eyebrow">MEMBERS</p><h2>成员周报</h2></div><span id="personalMemberCount" class="personal-member-count">0 人</span></div>
+              <p id="personalMemberHint" class="personal-member-hint">登录后显示本人和可查看成员。</p>
+              <label class="personal-member-search" for="personalMemberSearch"><span aria-hidden="true"></span><input id="personalMemberSearch" type="search" autocomplete="off" placeholder="搜索姓名、部门或角色" aria-label="搜索周报成员"></label>
               <div id="personalMembers" class="personal-member-list"><p class="muted">等待读取。</p></div>
             </aside>
             <div class="personal-report-column">
@@ -368,6 +370,6 @@
     <details id="reportSourceDetails" class="source-details"><summary>查看本版纳入的事实清单</summary><div id="reportSources" class="source-list"></div></details>
   </dialog>
 
-  <script src="static/app.js?v=20260831f"></script>
+  <script src="static/app.js?v=20260831g"></script>
 </body>
 </html>

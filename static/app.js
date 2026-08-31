@@ -38,6 +38,7 @@
   let teambitionData = null;
   let personalContext = null;
   let activePersonalUserId = "";
+  let personalMemberSearch = "";
   let activeReportId = null;
   let reportOriginalSections = {};
   let reportIsDirty = false;
@@ -320,16 +321,38 @@
 
   const sectionLines = (value) => String(value || "").split(/\r?\n/).map((line) => line.replace(/^[-•*]\s*/, "").trim()).filter(Boolean);
 
+  const personalMemberInitial = (item) => Array.from(String(item.name || item.userId || "员").trim())[0] || "员";
+
+  const updatePersonalReportRoute = (reportId, userId) => {
+    if (!reportId || routeFromHash() !== "personal-reports") return;
+    window.history.replaceState(null, "", personalReportHref(reportId, userId));
+  };
+
   const renderPersonalMembers = () => {
     const members = personalContext?.members || [];
+    const query = personalMemberSearch.trim().toLocaleLowerCase("zh-CN");
+    const filteredMembers = query ? members.filter((item) => [
+      item.name, item.userId, item.department, item.title, ...(item.roles || []),
+    ].some((value) => String(value || "").toLocaleLowerCase("zh-CN").includes(query))) : members;
     $("#personalMemberHint").textContent = personalContext?.canViewMembers
-      ? "可查看本人以及授权组织范围内有本周事项的成员。"
-      : "当前仅展示本人周报。";
-    $("#personalMembers").innerHTML = members.length ? members.map((item) => `
-      <button class="personal-member ${item.userId === activePersonalUserId ? "active" : ""}" data-personal-user-id="${escapeHtml(item.userId)}" type="button">
-        <span><strong>${escapeHtml(item.name || item.userId)}</strong><small>${escapeHtml(item.department || item.title || (item.isSelf ? "本人" : "未标注部门"))}</small></span>
-        <em>${item.itemCount || 0}</em>
-      </button>`).join("") : '<p class="muted">当前周报没有可查看成员。</p>';
+      ? (personalContext.viewerHasReport ? "已优先定位到本人，可搜索并切换授权成员。" : "本人本周无事项，已自动展示首位有内容的成员。")
+      : "当前仅有本人周报可查看。";
+    $("#personalMemberCount").textContent = query ? `${filteredMembers.length} / ${members.length} 人` : `${members.length} 人`;
+    $("#personalMembers").innerHTML = filteredMembers.length ? filteredMembers.map((item, index) => {
+      const details = [item.department, item.title].filter(Boolean).join(" · ") || (item.isSelf ? "当前登录成员" : "未标注部门");
+      const roles = (item.roles || []).join(" · ") || "周报责任人";
+      const active = item.userId === activePersonalUserId;
+      return `
+        <button class="personal-member ${active ? "active" : ""}" data-personal-user-id="${escapeHtml(item.userId)}" data-tone="${index % 4}" type="button" aria-pressed="${active}">
+          <span class="personal-member-avatar" aria-hidden="true">${escapeHtml(personalMemberInitial(item))}</span>
+          <span class="personal-member-main">
+            <span class="personal-member-name"><strong>${escapeHtml(item.name || item.userId)}</strong>${item.isSelf ? "<i>本人</i>" : ""}</span>
+            <small>${escapeHtml(details)}</small>
+            <span class="personal-member-role">${escapeHtml(roles)}</span>
+          </span>
+          <span class="personal-member-total"><strong>${item.itemCount || 0}</strong><small>事项</small></span>
+        </button>`;
+    }).join("") : `<div class="personal-member-empty"><strong>${members.length ? "没有匹配成员" : "暂无可查看成员"}</strong><span>${members.length ? "换个姓名、部门或角色试试。" : "当前周报没有可查看的个人事项。"}</span></div>`;
   };
 
   const renderPersonalReport = (data) => {
@@ -397,6 +420,7 @@
     if (userId) params.set("user_id", userId);
     const data = await api(`/api/personal-reports/${reportId}?${params.toString()}`);
     activePersonalUserId = data.person?.userId || userId || currentIdentityUserId;
+    updatePersonalReportRoute(data.reportId || reportId, activePersonalUserId);
     renderPersonalMembers();
     renderPersonalReport(data);
     return data;
@@ -412,7 +436,9 @@
     const members = personalContext.members || [];
     const requestedUserId = personalUserIdFromHash();
     if (requestedUserId && members.some((item) => item.userId === requestedUserId)) activePersonalUserId = requestedUserId;
-    if (!members.some((item) => item.userId === activePersonalUserId)) activePersonalUserId = personalContext.viewer?.userId || currentIdentityUserId;
+    if (!members.some((item) => item.userId === activePersonalUserId)) {
+      activePersonalUserId = personalContext.defaultUserId || members[0]?.userId || personalContext.viewer?.userId || currentIdentityUserId;
+    }
     renderPersonalMembers();
     return loadPersonalReport(selected, activePersonalUserId);
   };
@@ -808,6 +834,10 @@
   $("#refreshAll").addEventListener("click", refreshAll);
   $("#refreshPersonalReport").addEventListener("click", () => run("刷新个人周报", () => loadPersonalContext(), {refresh: false}));
   $("#personalReportPeriod").addEventListener("change", () => run("切换个人周报周期", () => loadPersonalContext(Number($("#personalReportPeriod").value || 0)), {refresh: false}));
+  $("#personalMemberSearch").addEventListener("input", (event) => {
+    personalMemberSearch = event.target.value || "";
+    renderPersonalMembers();
+  });
   $("#openLatestReport").addEventListener("click", () => {
     const latest = reportItems[0];
     if (!latest) return showToast("暂无可打开的周报。", "error");

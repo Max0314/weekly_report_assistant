@@ -514,7 +514,12 @@ def personal_report_context(
     report_members = report_service.personal_members(selected_report_id) if selected_report_id else []
     report_members_by_id = {str(item.get("userId") or ""): item for item in report_members}
     visible_ids = set(allowed).intersection(report_members_by_id)
-    visible_ids.add(identity.user_id)
+    if identity.user_id in report_members_by_id:
+        visible_ids.add(identity.user_id)
+    if not visible_ids:
+        # Keep the personal page usable when the viewer has no report and no
+        # authorized report member is available (for example a normal employee).
+        visible_ids.add(identity.user_id)
     members: list[dict[str, Any]] = []
     for user_id in visible_ids:
         directory_person = allowed.get(user_id, {})
@@ -530,13 +535,36 @@ def personal_report_context(
                 "isSelf": user_id == identity.user_id,
             }
         )
-    members.sort(key=lambda item: (not item["isSelf"], str(item.get("name") or "")))
+    members.sort(
+        key=lambda item: (
+            not (item["isSelf"] and int(item.get("itemCount") or 0) > 0),
+            str(item.get("name") or ""),
+            str(item.get("userId") or ""),
+        )
+    )
+    default_user_id = next(
+        (
+            str(item.get("userId") or "")
+            for item in members
+            if item["isSelf"] and int(item.get("itemCount") or 0) > 0
+        ),
+        "",
+    )
+    if not default_user_id:
+        default_user_id = next(
+            (str(item.get("userId") or "") for item in members if int(item.get("itemCount") or 0) > 0),
+            identity.user_id,
+        )
     return {
         "viewer": {"userId": identity.user_id, "name": identity.name},
         "selectedReportId": selected_report_id,
+        "defaultUserId": default_user_id,
+        "viewerHasReport": any(
+            item["isSelf"] and int(item.get("itemCount") or 0) > 0 for item in members
+        ),
         "reports": reports,
         "members": members,
-        "canViewMembers": len(members) > 1,
+        "canViewMembers": any(not item["isSelf"] for item in members),
     }
 
 

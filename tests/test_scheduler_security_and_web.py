@@ -10,10 +10,11 @@ from unittest.mock import patch
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from app.api import readiness, router
+from app.api import personal_report_context, readiness, router
 from app.config import Settings, settings
 from app.db import Database
 from app.services.directory import directory_service
+from app.services.admin_auth import AdminIdentity
 from app.services.delivery import DeliveryService
 from app.services.model_config import model_config_service
 from app.services.scheduler import SchedulerService
@@ -30,6 +31,35 @@ class SchedulerSecurityAndWebTests(unittest.TestCase):
 
     def tearDown(self) -> None:
         self.temp_dir.cleanup()
+
+    def test_personal_context_defaults_to_self_with_content_or_first_report_member(self) -> None:
+        identity = AdminIdentity(user_id="viewer", name="审核人")
+        report_members = [
+            {"userId": "manager-b", "name": "B经理", "itemCount": 2, "roles": ["项目经理"]},
+            {"userId": "manager-a", "name": "A经理", "itemCount": 3, "roles": ["产品经理"]},
+        ]
+        directory_people = [
+            {"userId": "viewer", "name": "审核人", "department": "管理部"},
+            {"userId": "manager-a", "name": "A经理", "department": "产品部"},
+            {"userId": "manager-b", "name": "B经理", "department": "项目部"},
+        ]
+        with patch("app.api._personal_full_scope", return_value=True), patch("app.api.report_service") as reports, patch("app.api.directory_service") as directory:
+            reports.personal_report_options.return_value = [{"id": 7}]
+            reports.personal_members.return_value = report_members
+            directory.accessible_people.return_value = directory_people
+            context = personal_report_context(report_id=7, identity=identity)
+            self.assertEqual(["manager-a", "manager-b"], [item["userId"] for item in context["members"]])
+            self.assertEqual("manager-a", context["defaultUserId"])
+            self.assertFalse(context["viewerHasReport"])
+
+            reports.personal_members.return_value = [
+                *report_members,
+                {"userId": "viewer", "name": "审核人", "itemCount": 1, "roles": ["产品经理"]},
+            ]
+            context = personal_report_context(report_id=7, identity=identity)
+            self.assertEqual("viewer", context["members"][0]["userId"])
+            self.assertEqual("viewer", context["defaultUserId"])
+            self.assertTrue(context["viewerHasReport"])
 
     def test_source_snapshot_requires_latest_success_and_fresh_data(self) -> None:
         scheduler = SchedulerService(database=self.db)
@@ -271,11 +301,12 @@ class SchedulerSecurityAndWebTests(unittest.TestCase):
         self.assertIn('api("/api/config"', script)
         self.assertIn('api("/api/model-config"', script)
         self.assertIn('api("/api/model-config/test"', script)
-        self.assertIn("styles.css?v=20260831f", html)
-        self.assertIn("app.js?v=20260831f", html)
+        self.assertIn("styles.css?v=20260831g", html)
+        self.assertIn("app.js?v=20260831g", html)
         self.assertIn('data-route="personal-reports"', html)
         self.assertIn('data-page="personal-reports"', html)
         self.assertIn('id="personalCharts"', html)
+        self.assertIn('id="personalMemberSearch"', html)
         self.assertIn("personal-external-link", script)
         self.assertIn("personal-donut", script)
         self.assertIn('id="cancelSections"', html)
