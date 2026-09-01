@@ -399,6 +399,62 @@ class TeambitionServiceTests(unittest.TestCase):
         self.assertNotIn("app-secret", serialized)
         self.assertNotIn("app-id", serialized)
 
+    def test_key_project_statuses_follow_active_aitable_records(self) -> None:
+        now = datetime(2026, 8, 26, 12, 0, tzinfo=SHANGHAI)
+        with patch("app.services.teambition.now_local", return_value=now):
+            self.service.sync(actor="test")
+        self.db.execute(
+            """
+            INSERT INTO source_record(
+                base_id,table_id,table_name,record_id,category_key,category_order,
+                category,title,status,progress_text,first_seen_at,last_seen_at,
+                changed_at,record_hash,raw_json
+            ) VALUES (
+                'base','uRM5L3r','重点项目跟踪','key-project-2','key_project',40,
+                '重点项目跟踪','待匹配项目','风险','正在确认TB项目',
+                '2026-08-26T12:00:00+08:00','2026-08-26T12:00:00+08:00',
+                '2026-08-26T12:00:00+08:00','hash-key-project-2',?
+            )
+            """,
+            (
+                json.dumps(
+                    {
+                        "fieldValues": {
+                            "项目名称": "待匹配项目",
+                            "项目编号": "D26/541-86014-B9999",
+                            "客户名称": "测试客户",
+                        }
+                    },
+                    ensure_ascii=False,
+                ),
+            ),
+        )
+
+        payload = self.service.key_project_statuses()
+        self.assertEqual(2, payload["summary"]["sourceCount"])
+        self.assertEqual(1, payload["summary"]["matchedCount"])
+        self.assertEqual(1, payload["summary"]["unmatchedCount"])
+        matched = next(item for item in payload["items"] if item["matched"])
+        self.assertEqual("批量生产及维护", matched["teambition"]["status"]["name"])
+        self.assertEqual("正常", matched["teambition"]["status"]["degreeLabel"])
+        self.assertEqual(85, matched["teambition"]["progressPercent"])
+        unmatched = self.service.key_project_statuses(
+            query="D26/541-86014-B9999", state="unmatched"
+        )
+        self.assertEqual(1, unmatched["total"])
+        self.assertEqual("待匹配项目", unmatched["items"][0]["source"]["name"])
+        self.assertIn(
+            {"name": "客户名称", "value": "测试客户"},
+            unmatched["items"][0]["source"]["fields"],
+        )
+
+        self.db.execute(
+            "UPDATE source_record SET is_deleted=1 WHERE record_id='key-project-1'"
+        )
+        after_delete = self.service.key_project_statuses()
+        self.assertEqual(1, after_delete["summary"]["sourceCount"])
+        self.assertEqual("key-project-2", after_delete["items"][0]["recordId"])
+
 
 if __name__ == "__main__":
     unittest.main()

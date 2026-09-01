@@ -410,6 +410,25 @@ def teambition_dashboard(
         _raise_api_error(exc)
 
 
+@router.get("/api/teambition/key-project-statuses")
+def teambition_key_project_statuses(
+    query: str = Query(default="", max_length=200),
+    state: str = Query(default="all", max_length=30),
+    limit: int = Query(default=500, ge=1, le=1000),
+    offset: int = Query(default=0, ge=0),
+    _: str = Depends(_admin_token),
+) -> dict[str, Any]:
+    try:
+        return teambition_service.key_project_statuses(
+            query=query,
+            state=state,
+            limit=limit,
+            offset=offset,
+        )
+    except Exception as exc:
+        _raise_api_error(exc)
+
+
 @router.get("/api/directory")
 def directory_search(
     query: str = Query(default="", max_length=100),

@@ -22,6 +22,13 @@ PROJECT_CODE_PATTERN = re.compile(
     r"(?<![A-Z0-9])[A-Z]\d{2}/[A-Z0-9]+(?:-[A-Z0-9]+){1,}(?![A-Z0-9])",
     re.IGNORECASE,
 )
+TB_STATUS_DEGREE_LABELS = {
+    "minor": "轻微",
+    "low": "较低",
+    "normal": "正常",
+    "risky": "风险",
+    "urgent": "紧急",
+}
 
 
 def _text(value: Any) -> str:
@@ -101,6 +108,43 @@ def _key_project_fields(row: dict[str, Any]) -> tuple[str, str, str]:
     code = _project_code(fields.get("项目编号"))
     name = _field_text(fields.get("项目名称")) or _text(row.get("title"))
     return code, name, _normalized_project_name(name)
+
+
+def _json_list(value: Any) -> list[Any]:
+    if isinstance(value, list):
+        return value
+    try:
+        parsed = json.loads(_text(value) or "[]")
+    except (TypeError, ValueError):
+        return []
+    return parsed if isinstance(parsed, list) else []
+
+
+def _source_field_values(row: dict[str, Any], *, limit: int = 40) -> list[dict[str, str]]:
+    try:
+        raw = json.loads(_text(row.get("raw_json")) or "{}")
+    except (TypeError, ValueError):
+        raw = {}
+    values = raw.get("fieldValues") if isinstance(raw, dict) else {}
+    if not isinstance(values, dict):
+        return []
+    output: list[dict[str, str]] = []
+    for name, value in values.items():
+        rendered = _field_text(value)
+        if not rendered:
+            continue
+        output.append({"name": _text(name)[:120], "value": rendered[:2000]})
+        if len(output) >= limit:
+            break
+    return output
+
+
+def _optional_percent(value: Any) -> float | None:
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    return number if 0 <= number <= 100 else None
 
 
 def _key_project_identity(row: dict[str, Any]) -> tuple[str, str]:
@@ -683,6 +727,172 @@ class TeambitionService:
             "projectStatusCount": int(projects.get("status_count") or 0),
             "syncedAt": _text(counts.get("synced_at")),
             "latestRun": latest or {},
+        }
+
+    def key_project_statuses(
+        self,
+        *,
+        query: str = "",
+        state: str = "all",
+        limit: int = 500,
+        offset: int = 0,
+    ) -> dict[str, Any]:
+        source_rows = self.db.fetch_all(
+            """
+            SELECT * FROM source_record
+            WHERE table_id=? AND is_deleted=0
+            ORDER BY (source_updated_at='') ASC,source_updated_at DESC,title ASC,record_id ASC
+            """,
+            (KEY_PROJECT_TABLE_ID,),
+        )
+        project_rows = self.db.fetch_all(
+            """
+            SELECT * FROM teambition_project
+            WHERE is_key_project=1 AND matched_record_id<>''
+            ORDER BY synced_at DESC,project_id ASC
+            """
+        )
+        projects_by_record: dict[str, dict[str, Any]] = {}
+        for project in project_rows:
+            projects_by_record.setdefault(_text(project.get("matched_record_id")), project)
+
+        items: list[dict[str, Any]] = []
+        for row in source_rows:
+            record_id = _text(row.get("record_id"))
+            code, source_name, _ = _key_project_fields(row)
+            project = projects_by_record.get(record_id) or {}
+            matched = bool(project)
+            status_name = _text(project.get("status_name"))
+            status_content = _text(project.get("status_content"))
+            status_degree = _text(project.get("status_degree"))
+            has_status = bool(status_name or status_content)
+            suspended = bool(project.get("is_suspended"))
+            archived = bool(project.get("is_archived"))
+            risky = status_degree in {"risky", "urgent"} or suspended or archived
+            product_managers = [
+                _text(value) for value in _json_list(row.get("product_manager_names_json"))
+                if _text(value)
+            ]
+            project_managers = [
+                _text(value) for value in _json_list(row.get("project_manager_names_json"))
+                if _text(value)
+            ]
+            assignees = [
+                {
+                    "name": _text(value.get("name")),
+                    "role": _text(value.get("role")),
+                }
+                for value in _json_list(row.get("assignees_json"))
+                if isinstance(value, dict) and _text(value.get("name"))
+            ]
+            item = {
+                "recordId": record_id,
+                "source": {
+                    "name": source_name or _text(row.get("title")) or "未命名重点项目",
+                    "projectCode": code,
+                    "status": _text(row.get("status")),
+                    "priority": _text(row.get("priority")),
+                    "progressText": _text(row.get("progress_text")),
+                    "planText": _text(row.get("plan_text")),
+                    "riskText": _text(row.get("risk_text")),
+                    "productManagers": product_managers,
+                    "projectManagers": project_managers,
+                    "assignees": assignees,
+                    "eventAt": _text(row.get("event_at")),
+                    "dueAt": _text(row.get("due_at")),
+                    "updatedAt": _text(row.get("source_updated_at") or row.get("last_seen_at")),
+                    "fields": _source_field_values(row),
+                },
+                "matched": matched,
+                "matchState": (
+                    "unmatched" if not matched else "status_missing" if not has_status
+                    else "risky" if risky else "matched"
+                ),
+                "teambition": (
+                    {
+                        "projectId": _text(project.get("project_id")),
+                        "name": _text(project.get("name")),
+                        "projectCode": _text(project.get("project_code")),
+                        "progressPercent": _optional_percent(
+                            project.get("progress_percent")
+                        ),
+                        "matchType": _text(project.get("match_type")),
+                        "isArchived": archived,
+                        "isSuspended": suspended,
+                        "startAt": _text(project.get("start_at")),
+                        "endAt": _text(project.get("end_at")),
+                        "updatedAt": _text(project.get("source_updated_at")),
+                        "syncedAt": _text(project.get("synced_at")),
+                        "status": {
+                            "name": status_name,
+                            "degree": status_degree,
+                            "degreeLabel": TB_STATUS_DEGREE_LABELS.get(
+                                status_degree, status_degree
+                            ),
+                            "content": status_content,
+                            "createdAt": _text(project.get("status_created_at")),
+                        },
+                    }
+                    if matched else None
+                ),
+            }
+            items.append(item)
+
+        summary = {
+            "sourceCount": len(items),
+            "matchedCount": sum(1 for item in items if item["matched"]),
+            "unmatchedCount": sum(1 for item in items if not item["matched"]),
+            "withStatusCount": sum(
+                1 for item in items
+                if item.get("teambition") and (
+                    item["teambition"]["status"]["name"]
+                    or item["teambition"]["status"]["content"]
+                )
+            ),
+            "statusMissingCount": sum(
+                1 for item in items if item["matchState"] == "status_missing"
+            ),
+            "riskyCount": sum(1 for item in items if item["matchState"] == "risky"),
+        }
+        normalized_query = _text(query).casefold()
+        normalized_state = _text(state) or "all"
+        if normalized_query:
+            items = [
+                item for item in items
+                if normalized_query in " ".join(
+                    [
+                        item["source"]["name"],
+                        item["source"]["projectCode"],
+                        item["source"]["status"],
+                        *(item["source"]["productManagers"]),
+                        *(item["source"]["projectManagers"]),
+                        _text((item.get("teambition") or {}).get("name")),
+                        _text((item.get("teambition") or {}).get("projectCode")),
+                        _text(((item.get("teambition") or {}).get("status") or {}).get("name")),
+                    ]
+                ).casefold()
+            ]
+        if normalized_state != "all":
+            items = [item for item in items if item["matchState"] == normalized_state]
+        total = len(items)
+        start = max(0, int(offset))
+        page_size = max(1, min(int(limit), 1000))
+        latest_source_at = max(
+            (_text(row.get("last_seen_at")) for row in source_rows),
+            default="",
+        )
+        return {
+            "summary": summary,
+            "total": total,
+            "offset": start,
+            "items": items[start:start + page_size],
+            "filters": {"query": _text(query), "state": normalized_state},
+            "source": {
+                "tableId": KEY_PROJECT_TABLE_ID,
+                "tableName": "重点项目跟踪",
+                "syncedAt": latest_source_at,
+            },
+            "sync": self.status(),
         }
 
     @staticmethod

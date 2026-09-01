@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <meta name="theme-color" content="#f6f8fb">
   <title>产品与项目经理周报助手</title>
-  <link rel="stylesheet" href="static/styles.css?v=20260831i">
+  <link rel="stylesheet" href="static/styles.css?v=20260901a">
 </head>
 <body>
   <div class="app-shell">
@@ -48,6 +48,7 @@
         <a href="#/teambition" class="nav-item" data-route="teambition"><span class="nav-icon">TB</span><span>TB 工作看板</span></a>
         <p class="nav-group-label">周报管理</p>
         <a href="#/reports" class="nav-item" data-route="reports"><span class="nav-icon">▤</span><span>周报展示</span></a>
+        <a href="#/key-project-status" class="nav-item" data-route="key-project-status"><span class="nav-icon">项</span><span>重点项目TB项目状态</span></a>
         <a href="#/personal-reports" class="nav-item" data-route="personal-reports"><span class="nav-icon">人</span><span>个人周报</span></a>
         <a href="#/report-config" class="nav-item" data-route="report-config"><span class="nav-icon">◇</span><span>周报配置</span></a>
         <p class="nav-group-label">系统设置</p>
@@ -156,6 +157,50 @@
             </div>
             <div id="teambitionSummary" class="list-summary">等待读取 TB 任务。</div>
             <div id="teambitionBoard" class="tb-board"><div class="empty-state"><strong>暂无 TB 数据</strong><p>配置正式密钥、同步人员目录后再执行 TB 同步。</p></div></div>
+          </section>
+        </div>
+      </section>
+
+      <section class="page" data-page="key-project-status" hidden>
+        <div class="page-width key-project-page-width">
+          <section class="page-hero key-project-hero">
+            <div><p class="eyebrow">KEY PROJECT STATUS</p><h2>重点项目 TB 项目状态</h2><p>以多维表“重点项目跟踪”为唯一项目清单，展示 TB 唯一匹配结果、项目信息和最新项目状态。</p></div>
+            <div class="actions"><button id="refreshKeyProjectStatuses" class="secondary" type="button">刷新状态</button><button id="syncKeyProjectStatuses" type="button">同步多维表 + TB</button></div>
+          </section>
+
+          <div id="keyProjectStatusStats" class="metric-grid">
+            <article class="metric-card"><span>多维表重点项目</span><strong>—</strong><small>等待读取</small></article>
+            <article class="metric-card"><span>TB 已匹配</span><strong>—</strong><small>等待读取</small></article>
+            <article class="metric-card"><span>已有最新状态</span><strong>—</strong><small>等待读取</small></article>
+            <article class="metric-card"><span>待匹配 / 待补状态</span><strong>—</strong><small>等待读取</small></article>
+          </div>
+
+          <section class="panel key-project-lineage">
+            <div class="section-head"><div><p class="eyebrow">DATA SCOPE</p><h2>数据口径</h2><p>多维表删除的记录不会继续展示；历史 TB 缓存不能扩大项目范围。</p></div></div>
+            <div id="keyProjectStatusConnection" class="directory-status" aria-live="polite">
+              <article><span>项目来源</span><strong>重点项目跟踪</strong><small>AI 多维表动态白名单</small></article>
+              <article><span>多维表同步</span><strong>—</strong><small>尚未读取</small></article>
+              <article><span>TB 状态同步</span><strong>—</strong><small>尚未读取</small></article>
+              <article><span>匹配规则</span><strong>唯一匹配</strong><small>项目编号优先，其次项目名称</small></article>
+            </div>
+          </section>
+
+          <section class="panel">
+            <div class="report-toolbar key-project-toolbar">
+              <div class="toolbar-filters">
+                <input id="keyProjectStatusSearch" type="search" placeholder="搜索项目名称、编号、负责人或TB状态">
+                <select id="keyProjectStatusFilter" aria-label="匹配与状态筛选">
+                  <option value="all">全部项目</option>
+                  <option value="matched">已匹配且状态正常</option>
+                  <option value="risky">风险 / 紧急 / 暂停</option>
+                  <option value="status_missing">已匹配但暂无状态</option>
+                  <option value="unmatched">待匹配 TB</option>
+                </select>
+              </div>
+              <button id="applyKeyProjectStatusFilters" class="secondary" type="button">应用筛选</button>
+            </div>
+            <div id="keyProjectStatusSummary" class="list-summary">等待读取重点项目。</div>
+            <div id="keyProjectStatusList" class="key-project-status-list"><div class="empty-state"><strong>暂无重点项目数据</strong><p>请先同步 AI 多维表，再同步 TB 项目状态。</p></div></div>
           </section>
         </div>
       </section>
@@ -381,6 +426,6 @@
     <div class="dialog-actions"><div class="dialog-action-copy"><strong>编辑个人周报</strong><span id="personalDirtyHint">保存后需要重新预览和审核团队周报。</span></div><div class="actions"><button id="cancelPersonalEdit" class="secondary" type="button">取消</button><button id="savePersonalEdit" type="button" disabled>保存个人周报</button></div></div>
   </dialog>
 
-  <script src="static/app.js?v=20260831i"></script>
+  <script src="static/app.js?v=20260901a"></script>
 </body>
 </html>

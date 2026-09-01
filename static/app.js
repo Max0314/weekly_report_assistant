@@ -15,6 +15,7 @@
   const ROUTES = {
     overview: {eyebrow: "WORKSPACE", title: "工作台概览", subtitle: "掌握数据、生成、审核与推送状态"},
     teambition: {eyebrow: "TEAM WORK EXECUTION", title: "TB 重点项目看板", subtitle: "仅展示多维表重点项目匹配到的任务与项目状态"},
+    "key-project-status": {eyebrow: "KEY PROJECT STATUS", title: "重点项目TB项目状态", subtitle: "多维表重点项目与TB最新状态的一一对应视图"},
     reports: {eyebrow: "REPORT CENTER", title: "周报展示", subtitle: "当前成稿、正式周报与历史版本"},
     "personal-reports": {eyebrow: "PERSONAL WEEKLY", title: "个人周报", subtitle: "我的总结与授权成员明细"},
     "report-config": {eyebrow: "REPORT SETTINGS", title: "周报配置", subtitle: "周期口径、项目背景与存档规则"},
@@ -36,6 +37,7 @@
   let latestReadiness = null;
   let latestCoverage = null;
   let teambitionData = null;
+  let keyProjectStatusData = null;
   let personalContext = null;
   let activePersonalUserId = "";
   let personalMemberSearch = "";
@@ -163,6 +165,9 @@
     closeSidebar();
     if (next === "teambition" && (accessConnected || tokenInput.value.trim()) && !teambitionData) {
       loadTeambitionDashboard().catch((error) => showToast(`TB 看板读取失败：${error.message}`, "error"));
+    }
+    if (next === "key-project-status" && (accessConnected || tokenInput.value.trim()) && !keyProjectStatusData) {
+      loadKeyProjectStatuses().catch((error) => showToast(`重点项目状态读取失败：${error.message}`, "error"));
     }
     if (next === "personal-reports" && sessionAuthenticated) {
       loadPersonalContext(personalReportIdFromHash()).catch((error) => showToast(`个人周报读取失败：${error.message}`, "error"));
@@ -556,6 +561,70 @@
     return data;
   };
 
+  const keyProjectMatchLabel = (value) => ({
+    matched: "已匹配", risky: "风险关注", status_missing: "暂无TB状态", unmatched: "待匹配TB",
+  }[value] || "待确认");
+
+  const compactDateTime = (value) => String(value || "").replace("T", " ").slice(0, 16) || "—";
+
+  const renderKeyProjectStatuses = (data) => {
+    keyProjectStatusData = data || {};
+    const summary = keyProjectStatusData.summary || {};
+    const sync = keyProjectStatusData.sync || {};
+    const latestRun = sync.latestRun || {};
+    const pendingCount = (summary.unmatchedCount || 0) + (summary.statusMissingCount || 0);
+    const stats = [
+      ["多维表重点项目", summary.sourceCount || 0, "随多维表当前记录动态变化"],
+      ["TB 已匹配", summary.matchedCount || 0, `待匹配 ${summary.unmatchedCount || 0}`],
+      ["已有最新状态", summary.withStatusCount || 0, `风险关注 ${summary.riskyCount || 0}`],
+      ["待匹配 / 待补状态", pendingCount, `缺状态 ${summary.statusMissingCount || 0}`],
+    ];
+    $("#keyProjectStatusStats").innerHTML = stats.map(([label, value, detail]) => `<article class="metric-card"><span>${escapeHtml(label)}</span><strong>${escapeHtml(value)}</strong><small>${escapeHtml(detail)}</small></article>`).join("");
+    $("#keyProjectStatusConnection").innerHTML = [
+      ["项目来源", keyProjectStatusData.source?.tableName || "重点项目跟踪", `当前 ${summary.sourceCount || 0} 条有效记录`],
+      ["多维表同步", compactDateTime(keyProjectStatusData.source?.syncedAt), "删除记录自动退出页面范围"],
+      ["TB 状态同步", compactDateTime(latestRun.finished_at || sync.syncedAt), latestRun.status || "尚未同步"],
+      ["匹配规则", "唯一匹配", "项目编号优先，其次项目名称"],
+    ].map(([label, value, detail]) => `<article><span>${escapeHtml(label)}</span><strong>${escapeHtml(value)}</strong><small>${escapeHtml(detail)}</small></article>`).join("");
+    $("#keyProjectStatusSummary").textContent = `当前筛选 ${keyProjectStatusData.total || 0} 项 · 多维表 ${summary.sourceCount || 0} 项 · TB匹配 ${summary.matchedCount || 0} 项 · 有状态 ${summary.withStatusCount || 0} 项`;
+    const items = keyProjectStatusData.items || [];
+    $("#keyProjectStatusList").innerHTML = items.length ? items.map((item) => {
+      const source = item.source || {};
+      const tb = item.teambition || null;
+      const status = tb?.status || {};
+      const managers = [...new Set([...(source.productManagers || []), ...(source.projectManagers || []), ...(source.assignees || []).map((person) => person.name)].filter(Boolean))];
+      const sourceFacts = [
+        ["多维表状态", source.status || "未标记"],
+        ["优先级", source.priority || "未标记"],
+        ["负责人", managers.join("、") || "未填写"],
+        ["本周进展", source.progressText || "未填写"],
+        ["风险与问题", source.riskText || "未填写"],
+        ["下一步计划", source.planText || "未填写"],
+        ["多维表更新", compactDateTime(source.updatedAt)],
+      ];
+      const progress = tb?.progressPercent == null ? null : Math.max(0, Math.min(100, Number(tb.progressPercent)));
+      const matchMeta = tb ? `${tb.matchType === "project_code" ? "项目编号" : "项目名称"}唯一匹配 · ${compactDateTime(tb.syncedAt)}同步` : "尚未找到唯一TB项目；下一次TB同步会继续按编号和名称匹配";
+      const fields = (source.fields || []).filter((field) => !["项目名称", "项目编号"].includes(field.name));
+      return `<article class="key-project-card state-${escapeHtml(item.matchState || "unmatched")}">
+        <header class="key-project-card-head"><div><div class="key-project-code">${escapeHtml(source.projectCode || tb?.projectCode || "未填写项目编号")}</div><h3>${escapeHtml(source.name || "未命名重点项目")}</h3><p>${escapeHtml(matchMeta)}</p></div><span class="key-project-state">${escapeHtml(keyProjectMatchLabel(item.matchState))}</span></header>
+        <div class="key-project-columns">
+          <section class="key-project-source"><div class="key-project-section-title"><span>AI</span><div><strong>多维表项目信息</strong><small>当前有效记录</small></div></div><dl>${sourceFacts.map(([label, value]) => `<div><dt>${escapeHtml(label)}</dt><dd>${escapeHtml(value)}</dd></div>`).join("")}</dl>${fields.length ? `<details class="key-project-fields"><summary>查看多维表更多字段（${fields.length}）</summary><div>${fields.map((field) => `<p><span>${escapeHtml(field.name)}</span><strong>${escapeHtml(field.value)}</strong></p>`).join("")}</div></details>` : ""}</section>
+          <section class="key-project-tb"><div class="key-project-section-title"><span>TB</span><div><strong>Teambition 项目状态</strong><small>${tb ? escapeHtml(tb.name || tb.projectId) : "等待唯一匹配"}</small></div></div>${tb ? `<div class="tb-project-facts"><span>项目编号 <strong>${escapeHtml(tb.projectCode || "未填写")}</strong></span><span>TB项目ID <strong>${escapeHtml(tb.projectId || "未填写")}</strong></span><span>项目周期 <strong>${escapeHtml([compactDateTime(tb.startAt).slice(0, 10), compactDateTime(tb.endAt).slice(0, 10)].join(" → "))}</strong></span><span>TB更新 <strong>${escapeHtml(compactDateTime(tb.updatedAt))}</strong></span></div><div class="tb-project-progress"><div><span>项目进度</span><strong>${progress == null ? "未填写" : `${progress}%`}</strong></div><div class="tb-progress-track"><i style="width:${progress == null ? 0 : progress}%"></i></div></div><div class="tb-latest-status"><div><span>最新项目状态</span><div>${tb.isArchived ? '<em>已归档</em>' : ""}${tb.isSuspended ? '<em>已暂停</em>' : ""}${status.degreeLabel ? `<em>${escapeHtml(status.degreeLabel)}</em>` : ""}</div></div><h4>${escapeHtml(status.name || "暂无项目状态名称")}</h4><p>${status.content ? escapeMultiline(status.content) : "TB 暂无状态正文"}</p><small>状态时间 ${escapeHtml(compactDateTime(status.createdAt))}</small></div>` : '<div class="tb-unmatched"><strong>等待匹配 TB 项目</strong><p>该项目仍会保留在页面中；只有项目编号或规范化名称能够唯一对应时，才会读取 TB 项目信息和最新状态。</p></div>'}</section>
+        </div></article>`;
+    }).join("") : '<div class="empty-state"><strong>当前筛选没有项目</strong><p>可调整搜索词或匹配状态；如多维表刚有变更，请执行“同步多维表 + TB”。</p></div>';
+  };
+
+  const loadKeyProjectStatuses = async () => {
+    const params = new URLSearchParams({
+      query: $("#keyProjectStatusSearch").value.trim(),
+      state: $("#keyProjectStatusFilter").value,
+      limit: "1000",
+    });
+    const data = await api(`/api/teambition/key-project-statuses?${params.toString()}`);
+    renderKeyProjectStatuses(data);
+    return data;
+  };
+
   const openReport = async (id) => {
     const report = await api(`/api/reports/${id}`);
     activeReportId = Number(id);
@@ -869,7 +938,7 @@
       busy.textContent = "";
       return false;
     }
-    const tasks = [loadReports(), loadConfig(), loadModelConfig(), loadCoverage(), loadEvents(), loadTeambitionDashboard()];
+    const tasks = [loadReports(), loadConfig(), loadModelConfig(), loadCoverage(), loadEvents(), loadTeambitionDashboard(), loadKeyProjectStatuses()];
     const results = await Promise.allSettled(tasks);
     const errors = [...new Set(results.filter((item) => item.status === "rejected").map((item) => item.reason?.message || "未知错误"))];
     if (errors.length) {
@@ -916,6 +985,16 @@
   $("#refreshOverview").addEventListener("click", () => run("检查链路", loadReadiness, {refresh: false}));
   $("#refreshTeambition").addEventListener("click", () => run("刷新 TB 看板", loadTeambitionDashboard, {refresh: false}));
   $("#applyTeambitionFilters").addEventListener("click", () => run("筛选 TB 看板", loadTeambitionDashboard, {refresh: false}));
+  $("#refreshKeyProjectStatuses").addEventListener("click", () => run("刷新重点项目状态", loadKeyProjectStatuses, {refresh: false}));
+  $("#applyKeyProjectStatusFilters").addEventListener("click", () => run("筛选重点项目状态", loadKeyProjectStatuses, {refresh: false}));
+  $("#keyProjectStatusFilter").addEventListener("change", () => run("筛选重点项目状态", loadKeyProjectStatuses, {refresh: false}));
+  $("#keyProjectStatusSearch").addEventListener("keydown", (event) => { if (event.key === "Enter") { event.preventDefault(); run("搜索重点项目状态", loadKeyProjectStatuses, {refresh: false}); } });
+  $("#syncKeyProjectStatuses").addEventListener("click", () => run("同步重点项目及TB状态", async () => {
+    await api("/api/sync/source", {method: "POST"});
+    const result = await api("/api/sync/teambition", {method: "POST"});
+    await Promise.all([loadKeyProjectStatuses(), loadTeambitionDashboard(), loadReadiness()]);
+    return result;
+  }, {refresh: false}));
   $("#refreshCoverage").addEventListener("click", () => run("刷新人员覆盖", loadCoverage, {refresh: false}));
   $("#remindCoverage").addEventListener("click", () => {
     if (!window.confirm("确定只向当前缺报人员发送一次钉钉单聊提醒？")) return;
@@ -1070,7 +1149,7 @@
     if (action === "sync-source") run("同步 AI 表", () => api("/api/sync/source", {method: "POST"}));
     if (action === "sync-teambition") run("同步 TB", async () => {
       const data = await api("/api/sync/teambition", {method: "POST"});
-      await loadTeambitionDashboard();
+      await Promise.all([loadTeambitionDashboard(), loadKeyProjectStatuses()]);
       return data;
     });
     if (action === "sync-directory") run("同步人员目录", () => api("/api/sync/directory", {method: "POST"}));
