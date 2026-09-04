@@ -120,16 +120,16 @@ def normalize_config(raw: dict[str, Any] | None) -> dict[str, Any]:
         "teambitionIncludeInReports",
         "autoGenerateEnabled",
         "autoPreviewEnabled",
-        "requireApproval",
-        "requirePreviewBeforeFormal",
         "enforceDirectoryForFormalSend",
         "sendGroupImages",
         "archiveWriteEnabled",
     ):
         config[key] = bool(config.get(key))
-    # Formal delivery is deliberately confirmation-driven in v1. It remains a
-    # visible config field so future migrations do not need a schema change.
+    # Formal delivery is deliberately confirmation-driven in v1. These are
+    # safety invariants, rather than admin-togglable conveniences.
     config["autoFormalSendEnabled"] = False
+    config["requireApproval"] = True
+    config["requirePreviewBeforeFormal"] = True
     config["sourceSyncIntervalMinutes"] = _int(config.get("sourceSyncIntervalMinutes"), 60, 5, 1440)
     config["sourceFreshnessHours"] = _int(config.get("sourceFreshnessHours"), 26, 1, 168)
     config["teambitionSyncIntervalMinutes"] = _int(
@@ -149,6 +149,9 @@ def normalize_config(raw: dict[str, Any] | None) -> dict[str, Any]:
     config["formalGroupTargets"] = _groups(config.get("formalGroupTargets"))
     config["previewPersonalTargets"] = _people(config.get("previewPersonalTargets"))
     config["formalPersonalTargets"] = _people(config.get("formalPersonalTargets"))
+    config["saturdayFinalPersonalTargets"] = _people(
+        config.get("saturdayFinalPersonalTargets")
+    )
     config["approverTargets"] = _people(config.get("approverTargets"))
     config["projectManagerRoster"] = _people(config.get("projectManagerRoster"))
     config["projectManagerTitleKeywords"] = _keywords(config.get("projectManagerTitleKeywords"))
@@ -182,6 +185,17 @@ class WorkflowConfigService:
         allowed = set(DEFAULT_WORKFLOW_CONFIG)
         merged = {**current, **{key: value for key, value in patch.items() if key in allowed}}
         normalized = normalize_config(merged)
+        for key in ("previewGroupTargets", "formalGroupTargets"):
+            supplied = patch.get(key)
+            if not isinstance(supplied, list):
+                continue
+            for item in supplied:
+                if not isinstance(item, dict):
+                    continue
+                conversation_id = _text(item.get("openConversationId"))
+                robot_code = _text(item.get("robotCode"))
+                if bool(conversation_id) != bool(robot_code):
+                    raise ValueError(f"{key} requires openConversationId and robotCode as a pair")
         preview_ids = {
             item["openConversationId"] for item in normalized["previewGroupTargets"]
             if item.get("enabled") is not False
@@ -192,12 +206,23 @@ class WorkflowConfigService:
         }
         if preview_ids & formal_ids:
             raise ValueError("preview groups and formal groups must use different openConversationId values")
-        for key in ("previewPersonalTargets", "formalPersonalTargets"):
+        for key in (
+            "previewPersonalTargets",
+            "formalPersonalTargets",
+            "saturdayFinalPersonalTargets",
+        ):
             for target in normalized[key]:
                 if target.get("enabled") is not False and not (
                     target.get("robotCode") or normalized.get("defaultRobotCode")
                 ):
                     raise ValueError(f"{key} requires defaultRobotCode or a target robotCode")
+        saturday_targets = [
+            item
+            for item in normalized["saturdayFinalPersonalTargets"]
+            if item.get("enabled") is not False
+        ]
+        if len(saturday_targets) > 1:
+            raise ValueError("saturdayFinalPersonalTargets allows exactly one enabled recipient")
         if normalized.get("archiveWriteEnabled"):
             if not normalized.get("archiveTableId"):
                 raise ValueError("archiveTableId is required when archiveWriteEnabled is true")

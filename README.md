@@ -10,8 +10,8 @@
 - **多表分类快照与可选归档**：按字段名解析 9 张同步表，将客户拜访、招投标、调研、重点项目、产品管理、支持待办、其他事项和使用反馈按业务分类汇总；每版周报保存生成时的不可变事实与负责人角色快照。正式发送成功后可按显式 fieldId/字段名映射回写 `周报存档`，默认关闭。
 - **TB 重点项目补充**：兼容 `bi_center` 的 Teambition native/dingtalk 两种只读接口；按多维表重点项目名称检索，并用项目编号或规范化名称做唯一匹配，只读取匹配项目的进度、项目状态和状态正文。TB 任务不再作为独立周报事实。
 - **重点项目 TB 状态页**：“周报管理”下提供独立页面，直接以多维表当前有效的“重点项目跟踪”记录为动态白名单；逐项展示多维表项目信息、TB 唯一匹配依据、项目进度和最新状态。多维表新增记录会先以待匹配状态出现，删除记录会立即退出页面范围。
-- **人工控制正式发送**：自动同步、自动生成和可选自动预览可以启用，正式发送必须由审核人确认。
-- **可追溯**：周报按周期和类型版本化；消息在外部调用前原子占位并保存 `processQueryKey`，支持安全重试和群/个人撤回。
+- **固定周末编排与人工审核**：Asia/Shanghai 周六 09:00 生成最新综合版并仅投递“推送测试”群，周六 17:00 按正式样式单聊已配置的最终版接收人，周日 20:00 仅会投递已人工审核、内容哈希未变化的当前综合版。`autoFormalSendEnabled` 在 v1 始终为 `false`。
+- **可追溯**：周报按周期和类型版本化；每次团队或个人保存都会创建新的综合版修订并使旧审核失效。审核记录绑定内容 SHA-256，消息在外部调用前原子占位并保存 `processQueryKey`，支持安全重试和群/个人撤回。
 - **人员覆盖**：产品经理名单来自 AI 表，项目经理可由显式名单和 `bi_center` 职位关键词组成；管理页显示缺报人员并可人工发送一次性单聊提醒。
 - **子路径部署**：`APP_BASE_PATH`、相对静态资源和前端 API 解析均支持共享域名下的 `/weekly-assistant/`。
 - **钉钉身份登录**：管理页首次访问通过钉钉 OAuth 验证身份；能匹配到 `bi_center` 有效在职人员目录的账号即可进入，不依赖周报确认人配置。会话使用独立密钥签名的 `HttpOnly` Cookie，`ADMIN_API_TOKEN` 仅保留为运维兜底。
@@ -65,11 +65,12 @@ copy .env.example .env
   "formalGroupTargets": [],
   "previewPersonalTargets": [{"name": "接收人", "userId": "user-id", "enabled": true}],
   "formalPersonalTargets": [{"name": "接收人", "userId": "user-id", "enabled": true}],
+  "saturdayFinalPersonalTargets": [{"name": "周六最终版接收人", "userId": "user-id", "enabled": true}],
   "approverTargets": [{"name": "接收人", "userId": "user-id", "enabled": true}]
 }
 ```
 
-个人编辑覆盖写入独立的 `weekly_report_personal_edit` 表，服务启动时通过 `CREATE TABLE IF NOT EXISTS` 自动完成增量建表，对已有周报和多维表事实快照没有数据迁移或改写。回滚旧版本前可保留该表，旧代码会忽略它；如显式删除该表，只会丢失个人周报的人工覆盖内容，团队周报和源记录不受影响。
+个人编辑覆盖写入独立的 `weekly_report_personal_edit` 表；保存时会复制到新综合版修订。群目标必须以 `openConversationId + robotCode` 成对配置，预览和正式群不得复用同一会话 ID；周六最终版接收人必须恰好一名。机器人群发接口未提供可核验的逐人 @ 合同，因此周六测试消息使用明确文字提醒，不声称已 @ 任何人。
 
 AI 模型配置是可选项；`AI_PROVIDER` 标记供应商，`AI_BASE_URL`、`AI_API_KEY`、`AI_MODEL` 三项齐全时调用 OpenAI-compatible Chat Completions，否则使用确定性模板并在周报中标记 `fallback/deterministic`。管理页提供与 `bi_center` 一致的 Provider、API Base、模型名、API Key 脱敏、连接测试、保存和恢复部署配置能力；页面保存的是本服务独立覆盖，不会反向修改 `bi_center`。
 

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import re
 from datetime import datetime, timedelta
 from typing import Any
@@ -21,6 +22,7 @@ KEY_PROJECT_TABLE_ID = next(
 )
 ROSTER_TABLE_IDS = {str(item["tableId"]) for item in SOURCE_TABLES if item.get("roster")}
 FINAL_STATES = {"formal_sent", "recalled", "cancelled"}
+NON_EDITABLE_STATES = FINAL_STATES | {"superseded"}
 EDITABLE_SECTION_KEYS = (
     "executiveSummary",
     "productHighlights",
@@ -107,6 +109,162 @@ class ReportService:
         self.db = database or db
         self.config_service = config_service or workflow_config_service
         self.ai_client = ai_client or ai_summary_client
+
+    def _content_hash(self, report_id: int) -> str:
+        """Hash every report value that can change a delivered team/personal view.
+
+        Operational state, timestamps and generated image paths are deliberately
+        excluded.  A revision with the same text but different report identity
+        is still separately protected by the current-version check in delivery.
+        """
+        row = self.db.fetch_one("SELECT * FROM weekly_report WHERE id=?", (int(report_id),))
+        if not row:
+            raise ValueError("weekly report not found")
+        personal_edits = self.db.fetch_all(
+            """
+            SELECT user_id,summary,category_digests_json,item_overrides_json
+            FROM weekly_report_personal_edit WHERE report_id=? ORDER BY user_id
+            """,
+            (int(report_id),),
+        )
+        payload = {
+            "title": str(row.get("title") or ""),
+            "window": _json(row.get("window_json"), {}),
+            "sections": _json(row.get("sections_json"), {}),
+            "metrics": _json(row.get("metrics_json"), {}),
+            "sources": _json(row.get("source_snapshot_json"), []),
+            "coverage": _json(row.get("coverage_json"), {}),
+            "personalEdits": [
+                {
+                    "userId": str(item.get("user_id") or ""),
+                    "summary": str(item.get("summary") or ""),
+                    "categoryDigests": _json(item.get("category_digests_json"), {}),
+                    "itemOverrides": _json(item.get("item_overrides_json"), {}),
+                }
+                for item in personal_edits
+            ],
+        }
+        encoded = json.dumps(
+            payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+        ).encode("utf-8")
+        return hashlib.sha256(encoded).hexdigest()
+
+    def _refresh_content_hash(self, report_id: int) -> str:
+        digest = self._content_hash(report_id)
+        self.db.execute(
+            "UPDATE weekly_report SET content_hash=? WHERE id=?",
+            (digest, int(report_id)),
+        )
+        return digest
+
+    def _begin_revision(self, report_id: int, *, actor: str) -> int:
+        """Clone the current editable report into a fresh, unapproved revision.
+
+        A save must never mutate an already previewed/approved payload in place:
+        that would leave an approval or a rendered image attached to different
+        content.  Personal overrides are copied so a later team edit does not
+        silently discard a colleague's saved personal report.
+        """
+        original = self.db.fetch_one("SELECT * FROM weekly_report WHERE id=?", (int(report_id),))
+        if not original:
+            raise ValueError("weekly report not found")
+        if str(original.get("workflow_state") or "") in NON_EDITABLE_STATES:
+            raise ValueError("final or superseded report cannot be edited")
+        latest = self.latest(
+            period_key=str(original.get("period_key") or ""),
+            report_kind=str(original.get("report_kind") or "combined"),
+        )
+        if not latest or int(latest["id"]) != int(report_id):
+            raise ValueError("only the latest report version can be edited")
+        timestamp = to_db(now_local())
+        with self.db.transaction() as connection:
+            max_row = connection.execute(
+                "SELECT MAX(version) AS version FROM weekly_report WHERE period_key=? AND report_kind=?",
+                (str(original.get("period_key") or ""), str(original.get("report_kind") or "combined")),
+            ).fetchone()
+            version = int((max_row["version"] if max_row else 0) or 0) + 1
+            cursor = connection.execute(
+                """
+                INSERT INTO weekly_report(
+                    period_key,report_kind,version,title,window_json,sections_json,metrics_json,
+                    source_record_ids_json,source_snapshot_json,coverage_json,workflow_state,
+                    ai_status,ai_error,image_path,image_generated_at,previewed_at,confirm_status,
+                    confirmed_by,confirmed_at,change_request,send_status,send_error,sent_at,
+                    archive_status,archive_record_id,archive_error,archive_attempted_at,archived_at,
+                    archive_payload_json,content_hash,approved_content_hash,created_by,created_at,updated_at
+                ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                """,
+                (
+                    str(original.get("period_key") or ""),
+                    str(original.get("report_kind") or "combined"),
+                    version,
+                    str(original.get("title") or ""),
+                    str(original.get("window_json") or "{}"),
+                    str(original.get("sections_json") or "{}"),
+                    str(original.get("metrics_json") or "{}"),
+                    str(original.get("source_record_ids_json") or "[]"),
+                    str(original.get("source_snapshot_json") or "[]"),
+                    str(original.get("coverage_json") or "{}"),
+                    "draft_generated",
+                    str(original.get("ai_status") or ""),
+                    str(original.get("ai_error") or ""),
+                    "",  # image_path
+                    "",  # image_generated_at
+                    "",  # previewed_at
+                    "",  # confirm_status
+                    "",  # confirmed_by
+                    "",  # confirmed_at
+                    "",  # change_request
+                    "",  # send_status
+                    "",  # send_error
+                    "",  # sent_at
+                    "",  # archive_status
+                    "",  # archive_record_id
+                    "",  # archive_error
+                    "",  # archive_attempted_at
+                    "",  # archived_at
+                    "{}",  # archive_payload_json
+                    "",  # content_hash (calculated after personal edit copy)
+                    "",  # approved_content_hash
+                    str(actor or "")[:300],
+                    timestamp,
+                    timestamp,
+                ),
+            )
+            new_report_id = int(cursor.lastrowid)
+            connection.execute(
+                """
+                INSERT INTO weekly_report_personal_edit(
+                    report_id,user_id,summary,category_digests_json,item_overrides_json,updated_by,updated_at
+                )
+                SELECT ?,user_id,summary,category_digests_json,item_overrides_json,updated_by,updated_at
+                FROM weekly_report_personal_edit WHERE report_id=?
+                """,
+                (new_report_id, int(report_id)),
+            )
+            connection.execute(
+                """
+                UPDATE weekly_report
+                SET workflow_state='superseded', confirm_status='invalidated', updated_at=?
+                WHERE id=?
+                """,
+                (timestamp, int(report_id)),
+            )
+        return new_report_id
+
+    def formal_version_is_current(self, report_id: int) -> tuple[bool, str]:
+        report = self.get(report_id)
+        if report.get("reportKind") != "combined":
+            return False, "only the current combined report can be formally delivered"
+        latest = self.latest(period_key=report["periodKey"], report_kind="combined")
+        if not latest or int(latest["id"]) != int(report_id):
+            return False, "report is not the latest combined version"
+        calculated = self._content_hash(report_id)
+        if calculated != str(report.get("contentHash") or ""):
+            return False, "report content hash is stale; save a new revision and re-approve it"
+        if str(report.get("approvedContentHash") or "") != calculated:
+            return False, "approval is not bound to the current report content"
+        return True, ""
 
     def _window(self, period_key: str = "") -> dict[str, Any]:
         config = self.config_service.get()
@@ -801,6 +959,16 @@ class ReportService:
         version = int(latest.get("version") or 0) + 1
         timestamp = to_db(now_local())
         title_suffix = {"combined": "", "product": "（产品经理版）", "project": "（项目经理版）"}[report_kind]
+        # A newly generated version invalidates any earlier non-final review for
+        # this period.  Formal delivery additionally checks the latest ID and
+        # content hash, so an old approval can never release fresh content.
+        self.db.execute(
+            """
+            UPDATE weekly_report SET workflow_state='superseded', confirm_status='invalidated', updated_at=?
+            WHERE period_key=? AND report_kind=? AND workflow_state NOT IN ('formal_sent','recalled','cancelled','superseded')
+            """,
+            (timestamp, window["periodKey"], report_kind),
+        )
         report_id = self.db.execute(
             """
             INSERT INTO weekly_report(
@@ -836,6 +1004,7 @@ class ReportService:
                 timestamp,
             ),
         )
+        self._refresh_content_hash(report_id)
         return self.get(report_id, include_sources=True)
 
     @staticmethod
@@ -851,6 +1020,8 @@ class ReportService:
             "metrics": _json(row.get("metrics_json"), {}),
             "sourceRecordIds": _json(row.get("source_record_ids_json"), []),
             "coverage": _json(row.get("coverage_json"), {}),
+            "contentHash": str(row.get("content_hash") or ""),
+            "approvedContentHash": str(row.get("approved_content_hash") or ""),
             "workflowState": str(row.get("workflow_state") or ""),
             "aiStatus": str(row.get("ai_status") or ""),
             "aiError": str(row.get("ai_error") or ""),
@@ -1000,8 +1171,9 @@ class ReportService:
         actor: str,
     ) -> dict[str, Any]:
         report = self.get(report_id)
-        if report["workflowState"] in FINAL_STATES:
-            raise ValueError("final report cannot be edited")
+        if report["workflowState"] in NON_EDITABLE_STATES:
+            raise ValueError("final or superseded report cannot be edited")
+        report_id = self._begin_revision(report_id, actor=actor)
         normalized_user_id = str(user_id or "").strip()
         if not normalized_user_id:
             raise ValueError("personal report user is required")
@@ -1065,6 +1237,7 @@ class ReportService:
                 """,
                 (timestamp, int(report_id)),
             )
+        self._refresh_content_hash(report_id)
         return self.personal(report_id, user_id=normalized_user_id)
 
     def personal_members(self, report_id: int) -> list[dict[str, Any]]:
@@ -1133,8 +1306,10 @@ class ReportService:
         title: str | None = None,
     ) -> dict[str, Any]:
         report = self.get(report_id)
-        if report["workflowState"] in FINAL_STATES:
-            raise ValueError("final report cannot be edited")
+        if report["workflowState"] in NON_EDITABLE_STATES:
+            raise ValueError("final or superseded report cannot be edited")
+        report_id = self._begin_revision(report_id, actor=actor)
+        report = self.get(report_id)
         merged = {**report["sections"]}
         for key in EDITABLE_SECTION_KEYS:
             if key in sections:
@@ -1180,11 +1355,12 @@ class ReportService:
                 int(report_id),
             ),
         )
+        self._refresh_content_hash(report_id)
         return self.get(report_id, include_sources=True)
 
     def approve(self, report_id: int, *, actor: str) -> dict[str, Any]:
         report = self.get(report_id)
-        if report["workflowState"] in FINAL_STATES:
+        if report["workflowState"] in NON_EDITABLE_STATES:
             raise ValueError("report is already final")
         if report["workflowState"] == "need_changes":
             raise ValueError("report requires changes before approval")
@@ -1193,13 +1369,14 @@ class ReportService:
                 raise ValueError("report must be previewed before approval")
             if report.get("workflowState") != "awaiting_approval":
                 raise ValueError("all preview messages must succeed before approval")
+        content_hash = self._refresh_content_hash(report_id)
         timestamp = to_db(now_local())
         self.db.execute(
             """
             UPDATE weekly_report SET workflow_state='approved', confirm_status='confirmed',
-                confirmed_by=?, confirmed_at=?, updated_at=? WHERE id=?
+                confirmed_by=?, confirmed_at=?, approved_content_hash=?, updated_at=? WHERE id=?
             """,
-            (actor, timestamp, timestamp, int(report_id)),
+            (actor, timestamp, content_hash, timestamp, int(report_id)),
         )
         return self.get(report_id)
 

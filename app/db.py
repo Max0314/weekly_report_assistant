@@ -228,6 +228,8 @@ CREATE TABLE IF NOT EXISTS weekly_report (
     archive_attempted_at TEXT NOT NULL DEFAULT '',
     archived_at TEXT NOT NULL DEFAULT '',
     archive_payload_json TEXT NOT NULL DEFAULT '{}',
+    content_hash TEXT NOT NULL DEFAULT '',
+    approved_content_hash TEXT NOT NULL DEFAULT '',
     created_by TEXT NOT NULL DEFAULT '',
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL,
@@ -333,6 +335,8 @@ class Database:
             "archive_attempted_at": "TEXT NOT NULL DEFAULT ''",
             "archived_at": "TEXT NOT NULL DEFAULT ''",
             "archive_payload_json": "TEXT NOT NULL DEFAULT '{}'",
+            "content_hash": "TEXT NOT NULL DEFAULT ''",
+            "approved_content_hash": "TEXT NOT NULL DEFAULT ''",
         }
         for column, definition in additions.items():
             if column not in weekly_columns:

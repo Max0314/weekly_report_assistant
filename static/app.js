@@ -214,7 +214,7 @@
       checkCard("人员目录", c.biCenter ? "ok" : "bad", `${c.directoryCache?.count || 0} 人`),
       checkCard("TB 重点项目", c.teambition?.ready ? "ok" : (c.teambition?.required ? "bad" : "neutral"), c.teambition?.configured ? `匹配 ${c.teambition?.keyProjectCount || 0} · 状态 ${c.teambition?.projectStatusCount || 0}` : "未配置密钥"),
       checkCard("AI 摘要", c.aiSummary ? "ok" : (aiDetail.configured ? "neutral" : "bad"), c.aiSummary ? "连接通过" : (aiDetail.error || "未配置")),
-      checkCard("推送目标", c.deliveryTargets?.ready ? "ok" : "bad", `测试 ${c.deliveryTargets?.preview || 0} / 正式 ${c.deliveryTargets?.formal || 0}`),
+      checkCard("推送目标", c.deliveryTargets?.ready ? "ok" : "bad", `测试 ${c.deliveryTargets?.preview || 0} / 正式 ${c.deliveryTargets?.formal || 0} / 周六最终 ${c.deliveryTargets?.saturdayFinal || 0}`),
       checkCard("回调鉴权", c.callbackAuth ? "ok" : "bad"),
       checkCard("公开链接", c.publicLinks ? "ok" : "bad"),
       checkCard("周报存档", c.archive?.ready ? "ok" : "bad", c.archive?.enabled ? `已启用 · ${c.archive?.mappedFields || 0} 个字段` : "未启用（可选）"),
@@ -233,8 +233,8 @@
     $("#directoryEndpoint").textContent = directoryDetail.baseUrl || "未配置";
     const scheduler = c.scheduler || {};
     $("#schedulerBanner").innerHTML = scheduler.processEnabled
-      ? `<span>调度已启用</span><strong>自动生成 ${scheduler.autoGenerateEnabled ? "开启" : "关闭"}，自动预览 ${scheduler.autoPreviewEnabled ? "开启" : "关闭"}</strong><p>正式发送仍由确认人手动触发。</p>`
-      : `<span>安全策略</span><strong>服务器定时任务当前关闭</strong><p>配置可保存，但不会自动生成或推送；正式发送始终需要人工确认。</p>`;
+      ? `<span>调度已启用</span><strong>周六 09:00 测试群 · 周六 17:00 最终版单聊 · 周日 20:00 正式检查</strong><p>周日仅发送已人工审核、内容哈希未变化的当前综合版。</p>`
+      : `<span>安全策略</span><strong>服务器定时任务当前关闭</strong><p>配置可保存，但不会自动生成或推送；正式发送始终需要人工审核。</p>`;
     renderOverview();
     return data;
   };
@@ -720,7 +720,7 @@
   const renderConfigCollections = () => {
     renderProjectRows();
     ["previewGroupTargets", "formalGroupTargets"].forEach(renderGroupRows);
-    ["previewPersonalTargets", "formalPersonalTargets", "approverTargets"].forEach(renderPeopleTargets);
+    ["previewPersonalTargets", "formalPersonalTargets", "approverTargets", "saturdayFinalPersonalTargets"].forEach(renderPeopleTargets);
   };
 
   const applyConfigToForm = (config, updateEditor = true) => {
@@ -831,6 +831,9 @@
     const person = selectedPerson();
     if (!person) return showToast("请先搜索并选择人员。", "error");
     workflowConfig[key] = Array.isArray(workflowConfig[key]) ? workflowConfig[key] : [];
+    if (key === "saturdayFinalPersonalTargets" && workflowConfig[key].length && !workflowConfig[key].some((item) => item.userId === person.userId)) {
+      return showToast("周六最终版只能配置一名接收人；请先移除现有接收人。", "error");
+    }
     if (!workflowConfig[key].some((item) => item.userId === person.userId)) workflowConfig[key].push(person);
     renderPeopleTargets(key);
     showToast("已加入配置草稿，请保存推送设置。", "success");

@@ -251,6 +251,7 @@ class ReportsAndDeliveryTests(unittest.TestCase):
             title="人工编辑周报标题",
         )
         self.assertEqual("人工编辑周报标题", edited["title"])
+        self.assertGreater(edited["version"], report["version"])
         self.assertEqual("产品管理进展已调整", edited["sections"]["productHighlights"])
         edited_category = next(
             item
@@ -265,7 +266,7 @@ class ReportsAndDeliveryTests(unittest.TestCase):
         self.assertEqual("", edited["confirmedBy"])
 
         personal = self.reports.update_personal(
-            report_id,
+            edited["id"],
             user_id="u1",
             summary="产品甲的人工个人总结",
             category_digests={category["key"]: "个人分类摘要"},
@@ -290,11 +291,12 @@ class ReportsAndDeliveryTests(unittest.TestCase):
         self.assertEqual(1, personal["metrics"]["completedCount"])
         self.assertEqual(1, personal["metrics"]["riskCount"])
         self.assertEqual(1, personal["metrics"]["highPriorityCount"])
-        frozen = self.reports.get(report_id, include_sources=True)
+        self.assertGreater(personal["version"], edited["version"])
+        frozen = self.reports.get(personal["reportId"], include_sources=True)
         self.assertEqual("版本规划", frozen["sources"][0]["title"])
         stored = self.db.fetch_one(
             "SELECT updated_by FROM weekly_report_personal_edit WHERE report_id=? AND user_id='u1'",
-            (report_id,),
+            (personal["reportId"],),
         )
         self.assertEqual("dingtalk:u1", stored["updated_by"])
 
@@ -432,6 +434,67 @@ class ReportsAndDeliveryTests(unittest.TestCase):
         current = self.reports.get(report["id"])
         self.assertEqual(report["workflowState"], current["workflowState"])
         self.assertEqual(report["confirmStatus"], current["confirmStatus"])
+
+    def test_saturday_private_final_uses_formal_style_and_preserves_review_state(self) -> None:
+        report = self.reports.generate(period_key="week:20260810", use_ai=False)
+        self.config.update({
+            "sendGroupImages": False,
+            "defaultRobotCode": "robot",
+            "saturdayFinalPersonalTargets": [{"name": "最终接收人", "userId": "u-final"}],
+        })
+        robot = FakeRobot()
+        delivery = DeliveryService(
+            database=self.db, reports=self.reports, renderer=FakeRenderer(),
+            config_service=self.config, robot=robot, directory=FakeDirectory(),
+        )
+
+        first = delivery.saturday_final(report["id"], schedule_key="week-20260810-sat17")
+        second = delivery.saturday_final(report["id"], schedule_key="week-20260810-sat17")
+
+        self.assertTrue(first["saturdayFinal"])
+        self.assertEqual(1, first["sent"])
+        self.assertTrue(second["results"][0]["skipped"])
+        self.assertEqual(1, len(robot.private_calls))
+        _, kwargs = robot.private_calls[0]
+        self.assertNotIn("【预览】", kwargs["msg_param"]["title"])
+        self.assertNotIn("**审核操作**", kwargs["msg_param"]["text"])
+        current = self.reports.get(report["id"])
+        self.assertEqual("draft_generated", current["workflowState"])
+        self.assertEqual("", current["confirmStatus"])
+
+    def test_formal_delivery_rejects_superseded_or_hash_stale_approval(self) -> None:
+        report = self.reports.generate(period_key="week:20260810", use_ai=False)
+        self.config.update({
+            "sendGroupImages": False,
+            "previewGroupTargets": [{"name": "推送测试", "openConversationId": "preview", "robotCode": "robot"}],
+            "formalGroupTargets": [{"name": "正式群", "openConversationId": "formal", "robotCode": "robot"}],
+        })
+        robot = FakeRobot()
+        delivery = DeliveryService(
+            database=self.db, reports=self.reports, renderer=FakeRenderer(),
+            config_service=self.config, robot=robot, directory=FakeDirectory(),
+        )
+        delivery.preview(report["id"])
+        approved = self.reports.approve(report["id"], actor="approver")
+        revised = self.reports.update_sections(
+            approved["id"], {"executiveSummary": "审核后的内容被保存修改"}, actor="editor"
+        )
+        with self.assertRaisesRegex(DeliveryError, "superseded"):
+            delivery.formal(approved["id"])
+        with self.assertRaisesRegex(DeliveryError, "approval"):
+            delivery.formal(revised["id"])
+
+        self.db.execute(
+            "UPDATE weekly_report SET workflow_state='awaiting_approval', previewed_at='2026-08-15T09:00:00+08:00' WHERE id=?",
+            (revised["id"],),
+        )
+        approved_revised = self.reports.approve(revised["id"], actor="approver")
+        self.db.execute(
+            "UPDATE weekly_report SET sections_json='{" + '"executiveSummary":"out-of-band change"' + "}' WHERE id=?",
+            (approved_revised["id"],),
+        )
+        with self.assertRaisesRegex(DeliveryError, "hash is stale"):
+            delivery.formal(approved_revised["id"])
 
     def test_personal_preview_formal_and_recall(self) -> None:
         report = self.reports.generate(period_key="week:20260810", use_ai=False)

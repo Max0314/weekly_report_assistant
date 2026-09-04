@@ -178,9 +178,14 @@ DEFAULT_WORKFLOW_CONFIG: dict[str, Any] = {
     "autoFormalSendEnabled": False,
     "requireApproval": True,
     "requirePreviewBeforeFormal": True,
-    "generateWeekday": 4,
-    "generateHour": 18,
-    "generateMinute": 10,
+    # The production cadence is fixed in SchedulerService: Saturday 09:00
+    # generates and sends only to the preview test group; Saturday 17:00
+    # sends the final version privately; Sunday 20:00 checks the approved
+    # current version for formal delivery.  These legacy display fields are
+    # retained for backward-compatible configuration reads only.
+    "generateWeekday": 5,
+    "generateHour": 9,
+    "generateMinute": 0,
     "periodEndWeekday": 4,
     "periodEndHour": 18,
     "quietStartHour": 21,
@@ -194,6 +199,10 @@ DEFAULT_WORKFLOW_CONFIG: dict[str, Any] = {
     "formalGroupTargets": [],
     "previewPersonalTargets": [],
     "formalPersonalTargets": [],
+    # Exactly one enabled recipient is required before the fixed Saturday
+    # private-final job can run.  It is configured from the read-only people
+    # directory and intentionally has no hard-coded user ID.
+    "saturdayFinalPersonalTargets": [],
     "approverTargets": [],
     "approvalCommandScope": "any_configured_group",
     "confirmSendTarget": "formal",

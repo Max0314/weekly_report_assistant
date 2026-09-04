@@ -7,7 +7,7 @@ from typing import Any, Callable
 from ..config import settings
 from ..db import Database, db
 from ..source_catalog import TEAMBITION_TABLE_ID
-from ..time_utils import from_db, now_local, to_db, weekly_window
+from ..time_utils import SHANGHAI, from_db, now_local, to_db
 from .collector import SourceCollector, source_collector
 from .delivery import DeliveryService, delivery_service
 from .directory import DirectoryService, directory_service
@@ -45,7 +45,7 @@ class SchedulerService:
         )
         if not row:
             return True
-        if row.get("status") == "success":
+        if row.get("status") in {"success", "skipped"}:
             return False
         next_retry = from_db(row.get("next_retry_at"))
         return not next_retry or now >= next_retry
@@ -82,6 +82,46 @@ class SchedulerService:
             (job_key, period_key, timestamp, timestamp),
         )
         return {"job": job_key, "status": "success", "result": result}
+
+    def _skip(self, job_key: str, period_key: str, reason: str) -> dict[str, Any]:
+        """Persist a non-retryable safety decision for weekend delivery."""
+        timestamp = to_db(now_local())
+        self.db.execute(
+            """
+            INSERT INTO job_status(job_key,period_key,status,retry_count,next_retry_at,error_text,ran_at,updated_at)
+            VALUES (?,?,'skipped',0,'',?,?,?)
+            ON CONFLICT(job_key,period_key) DO UPDATE SET status='skipped',retry_count=0,
+                next_retry_at='',error_text=excluded.error_text,ran_at=excluded.ran_at,
+                updated_at=excluded.updated_at
+            """,
+            (job_key, period_key, str(reason or "skipped")[:2000], timestamp, timestamp),
+        )
+        return {"job": job_key, "status": "skipped", "reason": str(reason or "skipped")}
+
+    @staticmethod
+    def _weekend_periods_due(
+        now: datetime, *, weekday: int, hour: int, minute: int = 0
+    ) -> list[str]:
+        """Return current/recoverable-weekend periods in Asia/Shanghai.
+
+        The bounded recovery window allows a process restart to make up a
+        missed Saturday/Sunday execution without replaying an arbitrarily old
+        report after an outage.  Job rows provide the durable idempotency key.
+        """
+        local = now.astimezone(SHANGHAI) if now.tzinfo else now.replace(tzinfo=SHANGHAI)
+        monday = (local - timedelta(days=local.weekday())).replace(
+            hour=0, minute=0, second=0, microsecond=0
+        )
+        result: list[str] = []
+        for candidate in (monday - timedelta(days=7), monday):
+            scheduled_at = candidate + timedelta(days=weekday, hours=hour, minutes=minute)
+            if scheduled_at <= local <= scheduled_at + timedelta(hours=36):
+                result.append(f"week:{candidate.strftime('%Y%m%d')}")
+        return result
+
+    @staticmethod
+    def _delivery_succeeded(result: dict[str, Any]) -> bool:
+        return bool(result.get("sent") or result.get("skipped")) and not int(result.get("failed") or 0)
 
     def _source_snapshot_ready(self, now: datetime, *, freshness_hours: int) -> tuple[bool, str]:
         latest = self.db.fetch_one(
@@ -167,23 +207,6 @@ class SchedulerService:
                         lambda: self.teambition.sync(actor="scheduler"),
                     )
                 )
-            window = weekly_window(
-                now,
-                end_weekday=int(config["periodEndWeekday"]),
-                end_hour=int(config["periodEndHour"]),
-            )
-            scheduled_at = window["startAt"].replace(
-                hour=int(config["generateHour"]), minute=int(config["generateMinute"])
-            ) + timedelta(days=int(config["generateWeekday"]))
-            due = now >= scheduled_at
-            quiet_start = int(config["quietStartHour"])
-            quiet_end = int(config["quietEndHour"])
-            in_quiet_hours = (
-                quiet_start <= now.hour < quiet_end
-                if quiet_start < quiet_end
-                else now.hour >= quiet_start or now.hour < quiet_end
-            )
-            period_key = str(window["periodKey"])
             source_ready, source_error = self._source_snapshot_ready(
                 now, freshness_hours=int(config["sourceFreshnessHours"])
             )
@@ -193,27 +216,99 @@ class SchedulerService:
             )
             data_ready = bool(source_ready and (teambition_ready or not teambition_required))
             data_error = source_error if not source_ready else teambition_error
-            if due and not data_ready and config.get("autoGenerateEnabled"):
-                results.append({"job": "report_generate", "status": "blocked", "error": data_error})
-            if due and data_ready and config.get("autoGenerateEnabled") and self._should_run("report_generate", period_key, now):
-                def generate() -> Any:
-                    existing = self.reports.latest(period_key=period_key)
-                    return existing or self.reports.generate(period_key=period_key, actor="scheduler")
-                generated = self._run(
-                    "report_generate", period_key,
-                    generate,
-                )
-                results.append(generated)
-            if due and data_ready and not in_quiet_hours and config.get("autoPreviewEnabled") and self._should_run("report_preview", period_key, now):
-                report = self.reports.latest(period_key=period_key)
-                if report:
-                    def preview() -> Any:
-                        if report.get("previewedAt"):
-                            return report
-                        if not report.get("imageReady"):
-                            self.renderer.render(int(report["id"]))
-                        return self.delivery.preview(int(report["id"]))
-                    results.append(self._run("report_preview", period_key, preview))
+            # Fixed Shanghai weekend cadence.  The generic configurable
+            # auto-preview path is intentionally not used for these jobs: the
+            # Saturday 09:00 delivery is *only* the configured test group;
+            # Sunday formal delivery can occur only after a hash-bound human
+            # approval of the current combined version.
+            for period_key in self._weekend_periods_due(now, weekday=5, hour=9):
+                if not self._should_run("weekend_sat09_test", period_key, now):
+                    continue
+                if not data_ready:
+                    results.append(
+                        self._run(
+                            "weekend_sat09_test", period_key,
+                            lambda error=data_error: (_ for _ in ()).throw(RuntimeError(error)),
+                        )
+                    )
+                    continue
+
+                def saturday_morning() -> Any:
+                    prior = self.db.fetch_one(
+                        "SELECT status FROM job_status WHERE job_key=? AND period_key=?",
+                        ("weekend_sat09_test", period_key),
+                    )
+                    report = self.reports.latest(period_key=period_key, report_kind="combined")
+                    # First execution always regenerates. A later retry uses
+                    # the newest saved revision, so an edit made after a failed
+                    # attempt is never replaced by stale generated content.
+                    if not prior or not report:
+                        report = self.reports.generate(
+                            period_key=period_key, report_kind="combined", actor="scheduler"
+                        )
+                    if not report.get("imageReady"):
+                        self.renderer.render(int(report["id"]))
+                    outcome = self.delivery.test_push(
+                        int(report["id"]), release_key=f"{period_key}-sat09"
+                    )
+                    if not self._delivery_succeeded(outcome):
+                        raise RuntimeError("Saturday test-group delivery failed")
+                    return outcome
+
+                results.append(self._run("weekend_sat09_test", period_key, saturday_morning))
+
+            for period_key in self._weekend_periods_due(now, weekday=5, hour=17):
+                if not self._should_run("weekend_sat17_final", period_key, now):
+                    continue
+
+                def saturday_final() -> Any:
+                    report = self.reports.latest(period_key=period_key, report_kind="combined")
+                    if not report:
+                        raise RuntimeError("latest combined report is unavailable for Saturday final delivery")
+                    if not report.get("imageReady"):
+                        self.renderer.render(int(report["id"]))
+                    outcome = self.delivery.saturday_final(
+                        int(report["id"]), schedule_key=f"{period_key}-sat17"
+                    )
+                    if not self._delivery_succeeded(outcome):
+                        raise RuntimeError("Saturday private final delivery failed")
+                    return outcome
+
+                results.append(self._run("weekend_sat17_final", period_key, saturday_final))
+
+            for period_key in self._weekend_periods_due(now, weekday=6, hour=20):
+                if not self._should_run("weekend_sun20_formal", period_key, now):
+                    continue
+                report = self.reports.latest(period_key=period_key, report_kind="combined")
+                if not report:
+                    results.append(self._skip("weekend_sun20_formal", period_key, "latest combined report is unavailable"))
+                    continue
+                current, reason = self.reports.formal_version_is_current(int(report["id"]))
+                if (
+                    report.get("workflowState") != "approved"
+                    or report.get("confirmStatus") != "confirmed"
+                    or not current
+                ):
+                    results.append(
+                        self._skip(
+                            "weekend_sun20_formal", period_key,
+                            reason or "current report has not been human-approved",
+                        )
+                    )
+                    continue
+
+                def sunday_formal() -> Any:
+                    current_report = self.reports.latest(period_key=period_key, report_kind="combined")
+                    if not current_report or int(current_report["id"]) != int(report["id"]):
+                        raise RuntimeError("latest combined report changed before formal delivery")
+                    if not current_report.get("imageReady"):
+                        self.renderer.render(int(current_report["id"]))
+                    outcome = self.delivery.formal(int(current_report["id"]))
+                    if not self._delivery_succeeded(outcome):
+                        raise RuntimeError("Sunday formal delivery failed")
+                    return outcome
+
+                results.append(self._run("weekend_sun20_formal", period_key, sunday_formal))
             return results
         finally:
             self._lock.release()

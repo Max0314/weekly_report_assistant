@@ -247,16 +247,19 @@ class DeliveryService:
         *,
         preview: bool,
         groups: list[dict[str, Any]] | None = None,
-        test_push_key: str = "",
+        personal_targets: list[dict[str, Any]] | None = None,
+        non_state_phase: str = "",
     ) -> dict[str, Any]:
         config = self.config_service.get()
         report = self.reports.get(report_id)
-        is_test_push = bool(test_push_key)
+        is_non_state_delivery = bool(non_state_phase)
         group_targets = groups if groups is not None else (
             config["previewGroupTargets"] if preview else config["formalGroupTargets"]
         )
-        personal_targets = [] if groups is not None else (
-            config["previewPersonalTargets"] if preview else config["formalPersonalTargets"]
+        resolved_personal_targets = personal_targets if personal_targets is not None else (
+            [] if groups is not None else (
+                config["previewPersonalTargets"] if preview else config["formalPersonalTargets"]
+            )
         )
         targets = [
             {
@@ -277,13 +280,13 @@ class DeliveryService:
                 "conversationId": "",
                 "robotCode": str(item.get("robotCode") or config.get("defaultRobotCode") or ""),
             }
-            for item in personal_targets
+            for item in resolved_personal_targets
             if item.get("enabled") is not False
         )
         if not targets:
             raise DeliveryError("preview target is not configured" if preview else "formal target is not configured")
-        if preview and not is_test_push and (
-            report["workflowState"] in {"formal_sent", "recalled", "cancelled", "need_changes"}
+        if preview and not is_non_state_delivery and (
+            report["workflowState"] in {"formal_sent", "recalled", "cancelled", "superseded", "need_changes"}
             or report.get("confirmStatus") == "confirmed"
         ):
             raise DeliveryError("this report is no longer eligible for preview")
@@ -299,9 +302,14 @@ class DeliveryService:
                 }
             if report["workflowState"] in {"recalled", "cancelled"}:
                 raise DeliveryError("recalled or cancelled report cannot be sent again; generate a new version")
+            if report["workflowState"] == "superseded":
+                raise DeliveryError("superseded report cannot be formally delivered")
+            current, reason = self.reports.formal_version_is_current(report_id)
+            if not current:
+                raise DeliveryError(reason)
             if config.get("requirePreviewBeforeFormal") and not report.get("previewedAt"):
                 raise DeliveryError("report must be previewed before formal delivery")
-            if config.get("requireApproval") and report.get("confirmStatus") != "confirmed":
+            if report.get("confirmStatus") != "confirmed":
                 raise DeliveryError("report must be approved before formal delivery")
             if config.get("enforceDirectoryForFormalSend") and self.directory.cache_status()["count"] <= 0:
                 raise DeliveryError("bi_center employee directory cache is empty; formal delivery is blocked")
@@ -317,15 +325,23 @@ class DeliveryService:
         personal_url_factory = getattr(self.renderer, "personal_report_url", None)
         if callable(personal_url_factory):
             personal_url = str(personal_url_factory(report_id) or "")
-        if personal_targets and not personal_url:
+        if resolved_personal_targets and not personal_url:
             raise DeliveryError(
                 "PUBLIC_BASE_URL and DingTalk SSO are required for personal report delivery"
             )
         if config.get("sendGroupImages") and not urls.get("imageUrl"):
             raise DeliveryError("PUBLIC_BASE_URL and PUBLIC_LINK_SECRET are required for image delivery")
-        message_is_preview = preview and not is_test_push
+        message_is_preview = preview and not is_non_state_delivery
         markdown = self._markdown(report, preview=message_is_preview)
-        phase = f"test-{test_push_key}" if is_test_push else ("preview" if preview else "formal")
+        phase = non_state_phase or ("preview" if preview else "formal")
+        if phase.startswith("test-"):
+            # The group-send endpoint does not provide a verifiable per-user
+            # @ contract for this robot mode. Keep the reminder explicit and
+            # auditable instead of claiming that people were mentioned.
+            markdown = (
+                f"{markdown}\n\n---\n\n**核查提醒**：请相关负责人核对本版内容；"
+                "如需修改，请在周六 17:00 前保存新版并重新走预览与审核。"
+            )
         results: list[dict[str, Any]] = []
         sent = 0
         failed = 0
@@ -450,7 +466,7 @@ class DeliveryService:
             sent += 1 if image_result.get("sent") else 0
             failed += 0 if image_result.get("sent") else 1
         timestamp = to_db(now_local())
-        if is_test_push:
+        if is_non_state_delivery:
             state = str(report.get("workflowState") or "")
         elif preview:
             state = "awaiting_approval" if sent and not failed else "retryable_error"
@@ -475,14 +491,14 @@ class DeliveryService:
             )
         archive_result = (
             self._archive_after_formal(report_id, report_url=str(urls.get("reportUrl") or ""))
-            if not preview and not is_test_push and state == "formal_sent"
+            if not preview and not is_non_state_delivery and state == "formal_sent"
             else {"status": "not_attempted", "skipped": True, "recordId": "", "error": ""}
         )
         return {
             "sent": sent,
             "failed": failed,
-            "testPush": is_test_push,
-            "releaseKey": test_push_key if is_test_push else "",
+            "testPush": phase.startswith("test-"),
+            "releaseKey": phase[5:] if phase.startswith("test-") else "",
             "results": results,
             "archive": archive_result,
             "report": self.reports.get(report_id),
@@ -506,8 +522,30 @@ class DeliveryService:
             report_id,
             preview=True,
             groups=groups,
-            test_push_key=normalized_key,
+            non_state_phase=f"test-{normalized_key}",
         )
+
+    def saturday_final(self, report_id: int, *, schedule_key: str) -> dict[str, Any]:
+        """Send the configured Saturday final copy without changing review state."""
+        normalized_key = re.sub(r"[^0-9A-Za-z._-]+", "-", str(schedule_key or "").strip()).strip("-._")[:120]
+        if not normalized_key:
+            raise DeliveryError("Saturday final schedule key is required")
+        targets = [
+            item
+            for item in self.config_service.get().get("saturdayFinalPersonalTargets") or []
+            if item.get("enabled") is not False
+        ]
+        if len(targets) != 1:
+            raise DeliveryError("exactly one Saturday final personal recipient is required")
+        result = self._send_targets(
+            report_id,
+            preview=True,
+            groups=[],
+            personal_targets=targets,
+            non_state_phase=f"saturday17-{normalized_key}",
+        )
+        result["saturdayFinal"] = True
+        return result
 
     def formal(self, report_id: int) -> dict[str, Any]:
         return self._send_targets(report_id, preview=False)

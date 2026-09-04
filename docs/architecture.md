@@ -61,7 +61,9 @@ TB 项目严格以多维表重点项目为白名单：项目编号精确匹配�
 
 `draft_generated → rendered → awaiting_approval → approved → formal_sent`
 
-旁路状态为 `need_changes`、`cancelled` 和 `retryable_error`。正式发送需要：审核状态正确、至少一个正式个人/群目标、人员缓存非空、图片已生成、公开签名链接可用。消息幂等键由“周报 ID + 阶段 + 目标类型 + 目标 + 消息类型”组成；发送前先在 SQLite 事务中占位，10 分钟内的并发重复调用会被阻断。
+旁路状态为 `need_changes`、`cancelled`、`superseded` 和 `retryable_error`。保存团队或个人内容时，服务复制当前综合版到新版本、复制个人覆盖、使旧版 `superseded` 并清除其可用审核；新版本的 `content_hash` 覆盖团队内容、快照、指标和个人覆盖，审核写入 `approved_content_hash`。正式发送必须同时满足“当前综合版、人工审核、两个哈希相等”。消息幂等键由“周报 ID + 阶段 + 目标类型 + 目标 + 消息类型”组成；发送前先在 SQLite 事务中占位，10 分钟内的并发重复调用会被阻断。
+
+周末任务以 Asia/Shanghai 计算并使用各自 `job_status` 键：`weekend_sat09_test`、`weekend_sat17_final`、`weekend_sun20_formal`。任务重启后在 36 小时补偿窗口内重试失败的同一周期；未审核或版本已变化的周日任务记录 `skipped` 与原因，绝不发送。
 
 归档有独立的 `pending/sent/error` 状态。只有周报进入 `formal_sent` 后才允许归档；归档失败不会回退正式发送状态。再次调用正式发送只重试归档，不会重复推送消息。
 

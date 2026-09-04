@@ -353,17 +353,18 @@
             <button id="saveDeliveryConfig" type="button">保存推送设置</button>
           </section>
 
-          <div id="schedulerBanner" class="safety-banner"><span>安全策略</span><strong>读取调度器状态中…</strong><p>正式推送不会自动执行。</p></div>
+          <div id="schedulerBanner" class="safety-banner"><span>安全策略</span><strong>读取调度器状态中…</strong><p>周日仅可发送已人工审核且内容哈希未变化的当前综合版。</p></div>
 
           <section class="panel">
             <div class="section-head"><div><span class="section-index">01</span><h2>机器人与个人接收人</h2><p>个人推送使用默认 Robot Code；人员来自 bi_center 只读目录。</p></div></div>
             <div class="form-grid two-cols"><label>默认 Robot Code<input id="defaultRobotCode" placeholder="ding..."><small class="field-help">企业内部应用机器人的唯一编码，个人消息和未单独填写的群目标均使用它。</small></label><label>搜索人员<div class="inline"><input id="recipientSearch" placeholder="姓名、部门或职位"><button id="searchRecipient" class="secondary" type="button">搜索</button></div><small class="field-help">从本地 bi_center 缓存按姓名、部门、业务组、职位或工号检索。</small></label></div>
-            <div class="recipient-picker top-gap"><select id="recipientSelect"><option value="">请先同步或搜索人员</option></select><button data-add-person="previewPersonalTargets" class="secondary" type="button">加入测试接收人</button><button data-add-person="formalPersonalTargets" class="secondary" type="button">加入正式接收人</button><button data-add-person="approverTargets" class="secondary" type="button">设为确认人</button><button id="applyPersonalTarget" type="button">设为个人全流程</button></div>
-            <div class="field-guide compact-guide top-gap"><div><strong>测试接收人</strong><p>只接收预览，不代表允许正式发送。</p></div><div><strong>正式接收人</strong><p>审核通过后接收正式周报。</p></div><div><strong>周报确认人</strong><p>可执行确认、退回和正式发送指令。</p></div><div><strong>个人全流程</strong><p>将同一人设为以上三类目标，并清空群目标草稿。</p></div></div>
+            <div class="recipient-picker top-gap"><select id="recipientSelect"><option value="">请先同步或搜索人员</option></select><button data-add-person="previewPersonalTargets" class="secondary" type="button">加入测试接收人</button><button data-add-person="formalPersonalTargets" class="secondary" type="button">加入正式接收人</button><button data-add-person="approverTargets" class="secondary" type="button">设为确认人</button><button data-add-person="saturdayFinalPersonalTargets" class="secondary" type="button">设为周六最终版接收人</button><button id="applyPersonalTarget" type="button">设为个人全流程</button></div>
+            <div class="field-guide compact-guide top-gap"><div><strong>测试接收人</strong><p>只接收预览，不代表允许正式发送。</p></div><div><strong>正式接收人</strong><p>审核通过后接收正式周报。</p></div><div><strong>周报确认人</strong><p>可执行确认、退回和正式发送指令。</p></div><div><strong>周六最终版接收人</strong><p>仅限一人；周六 17:00 按正式样式单聊，不改变审核或正式发送状态。</p></div></div>
             <div class="target-columns top-gap">
               <div class="target-box"><div><strong>测试接收人</strong><span>接收预览</span></div><div id="previewPersonalTargets" class="target-list"></div></div>
               <div class="target-box"><div><strong>正式接收人</strong><span>审核后接收</span></div><div id="formalPersonalTargets" class="target-list"></div></div>
               <div class="target-box"><div><strong>周报确认人</strong><span>可执行确认指令</span></div><div id="approverTargets" class="target-list"></div></div>
+              <div class="target-box"><div><strong>周六最终版接收人</strong><span>仅一人</span></div><div id="saturdayFinalPersonalTargets" class="target-list"></div></div>
             </div>
           </section>
 
@@ -426,6 +427,6 @@
     <div class="dialog-actions"><div class="dialog-action-copy"><strong>编辑个人周报</strong><span id="personalDirtyHint">保存后需要重新预览和审核团队周报。</span></div><div class="actions"><button id="cancelPersonalEdit" class="secondary" type="button">取消</button><button id="savePersonalEdit" type="button" disabled>保存个人周报</button></div></div>
   </dialog>
 
-  <script src="static/app.js?v=20260901a"></script>
+  <script src="static/app.js?v=20260904a"></script>
 </body>
 </html>

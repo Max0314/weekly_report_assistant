@@ -98,6 +98,42 @@ class WorkflowConfigTests(unittest.TestCase):
             })
             self.assertEqual("u1", configured["formalPersonalTargets"][0]["userId"])
 
+    def test_group_targets_require_complete_conversation_robot_pairs(self) -> None:
+        import tempfile
+        from pathlib import Path
+        from app.db import Database
+        from app.services.workflow_config import WorkflowConfigService
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            database = Database(Path(temp_dir) / "test.db")
+            database.initialize()
+            service = WorkflowConfigService(database)
+            with self.assertRaisesRegex(ValueError, "as a pair"):
+                service.update({
+                    "previewGroupTargets": [
+                        {"name": "推送测试", "openConversationId": "cid-only"}
+                    ]
+                })
+
+    def test_saturday_final_allows_only_one_configured_recipient(self) -> None:
+        import tempfile
+        from pathlib import Path
+        from app.db import Database
+        from app.services.workflow_config import WorkflowConfigService
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            database = Database(Path(temp_dir) / "test.db")
+            database.initialize()
+            service = WorkflowConfigService(database)
+            with self.assertRaisesRegex(ValueError, "exactly one"):
+                service.update({
+                    "defaultRobotCode": "robot",
+                    "saturdayFinalPersonalTargets": [
+                        {"name": "甲", "userId": "u1"},
+                        {"name": "乙", "userId": "u2"},
+                    ],
+                })
+
     def test_archive_requires_explicit_idempotency_and_identity_fields(self) -> None:
         import tempfile
         from pathlib import Path

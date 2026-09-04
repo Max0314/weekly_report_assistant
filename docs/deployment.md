@@ -116,6 +116,8 @@ https://neoflow-cn.neo-net.com/weekly-assistant/api/auth/dingtalk/callback
 - `weekly_report.archive_status/archive_record_id/archive_error TEXT NOT NULL DEFAULT ''`
 - `weekly_report.archive_attempted_at/archived_at TEXT NOT NULL DEFAULT ''`
 - `weekly_report.archive_payload_json TEXT NOT NULL DEFAULT '{}'`
+- `weekly_report.content_hash TEXT NOT NULL DEFAULT ''`
+- `weekly_report.approved_content_hash TEXT NOT NULL DEFAULT ''`
 - `source_record.category_key TEXT NOT NULL DEFAULT ''`
 - `source_record.category_order INTEGER NOT NULL DEFAULT 999`
 - `source_record.subcategory TEXT NOT NULL DEFAULT ''`
@@ -124,7 +126,7 @@ https://neoflow-cn.neo-net.com/weekly-assistant/api/auth/dingtalk/callback
 - 新建 `organization_cache` 和 `employee_org_relation_cache` 两张可重建缓存表
 - 新建 `teambition_task`、`teambition_project`、`teambition_user_map` 和 `teambition_sync_run` 四张 TB 缓存/审计表；`teambition_project` 增加重点项目匹配、进度和项目状态字段。历史 `source_record.table_id=teambition_tasks` 投影会在下一次 TB 同步时停用，不再进入新周报
 
-影响：已有周报内容、状态、事实快照和发送日志不变；`teambition_project` 新字段以空值、`0` 或 `-1` 初始化，部署后的下一次正式 AI 表/TB 同步仅为当前多维表重点项目补齐真实状态，不会回写或伪造历史周报。个人周报继续由生成时快照实时派生。回滚旧镜像时新增列会被忽略，既有项目、任务、人员和发送数据不丢失。
+影响：已有周报内容、状态、事实快照和发送日志不变；历史版本的两个 hash 字段初始为空，因此不能被新代码正式发送，需重新保存/预览/审核生成新版。`teambition_project` 新字段以空值、`0` 或 `-1` 初始化，部署后的下一次正式 AI 表/TB 同步仅为当前多维表重点项目补齐真实状态，不会回写或伪造历史周报。个人周报继续由生成时快照实时派生。回滚旧镜像时新增列会被忽略，既有项目、任务、人员和发送数据不丢失。
 
 ## 回滚
 

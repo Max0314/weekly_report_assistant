@@ -157,6 +157,99 @@ class SchedulerSecurityAndWebTests(unittest.TestCase):
         self.assertFalse(ready)
         self.assertIn("stale", reason)
 
+    def test_weekend_jobs_use_separate_stable_keys_and_the_latest_report(self) -> None:
+        class Config:
+            def get(self):
+                return {
+                    "enabled": True,
+                    "sourceSyncEnabled": False,
+                    "directorySyncEnabled": False,
+                    "teambitionSyncEnabled": False,
+                    "teambitionIncludeInReports": False,
+                    "sourceSyncIntervalMinutes": 60,
+                    "teambitionSyncIntervalMinutes": 60,
+                    "sourceFreshnessHours": 26,
+                }
+
+        class Reports:
+            def __init__(self):
+                self.report = {"id": 7, "imageReady": False, "workflowState": "draft_generated", "confirmStatus": ""}
+                self.generate_calls = 0
+
+            def latest(self, **_kwargs):
+                return dict(self.report)
+
+            def generate(self, **_kwargs):
+                self.generate_calls += 1
+                self.report = {"id": 8, "imageReady": False, "workflowState": "draft_generated", "confirmStatus": ""}
+                return dict(self.report)
+
+            def formal_version_is_current(self, _report_id):
+                return (
+                    self.report["workflowState"] == "approved" and self.report["confirmStatus"] == "confirmed",
+                    "approval is not bound to the current report content",
+                )
+
+        class Renderer:
+            def __init__(self, reports):
+                self.reports = reports
+                self.calls = []
+
+            def render(self, report_id):
+                self.calls.append(report_id)
+                self.reports.report["imageReady"] = True
+                return dict(self.reports.report)
+
+        class Delivery:
+            def __init__(self):
+                self.test_calls = []
+                self.final_calls = []
+                self.formal_calls = []
+
+            def test_push(self, report_id, *, release_key):
+                self.test_calls.append((report_id, release_key))
+                return {"sent": 1, "failed": 0}
+
+            def saturday_final(self, report_id, *, schedule_key):
+                self.final_calls.append((report_id, schedule_key))
+                return {"sent": 1, "failed": 0}
+
+            def formal(self, report_id):
+                self.formal_calls.append(report_id)
+                return {"sent": 1, "failed": 0}
+
+        reports = Reports()
+        delivery = Delivery()
+        scheduler = SchedulerService(
+            database=self.db,
+            config_service=Config(),
+            reports=reports,
+            renderer=Renderer(reports),
+            delivery=delivery,
+        )
+        scheduler._source_snapshot_ready = lambda *_args, **_kwargs: (True, "")
+        scheduler._teambition_snapshot_ready = lambda *_args, **_kwargs: (True, "")
+
+        saturday_morning = datetime(2026, 8, 15, 9, 1, tzinfo=SHANGHAI)
+        scheduler.tick(saturday_morning)
+        scheduler.tick(saturday_morning)
+        self.assertEqual([(8, "week:20260810-sat09")], delivery.test_calls)
+        self.assertEqual(1, reports.generate_calls)
+
+        saturday_final = datetime(2026, 8, 15, 17, 1, tzinfo=SHANGHAI)
+        scheduler.tick(saturday_final)
+        scheduler.tick(saturday_final)
+        self.assertEqual([(8, "week:20260810-sat17")], delivery.final_calls)
+
+        sunday = datetime(2026, 8, 16, 20, 1, tzinfo=SHANGHAI)
+        scheduler.tick(sunday)
+        skipped = self.db.fetch_one(
+            "SELECT status,error_text FROM job_status WHERE job_key='weekend_sun20_formal' AND period_key='week:20260810'"
+        )
+        self.assertEqual("skipped", skipped["status"])
+        self.assertIn("approval", skipped["error_text"])
+        self.assertEqual([], delivery.formal_calls)
+
     def test_send_claim_is_atomic_and_blocks_an_inflight_duplicate(self) -> None:
         delivery = DeliveryService(database=self.db)
         self.assertEqual("claimed", delivery._claim_send("same-key"))
@@ -184,6 +277,8 @@ class SchedulerSecurityAndWebTests(unittest.TestCase):
         self.assertIn("archive_status", columns)
         self.assertIn("archive_record_id", columns)
         self.assertIn("archive_payload_json", columns)
+        self.assertIn("content_hash", columns)
+        self.assertIn("approved_content_hash", columns)
 
     def test_additive_migration_upgrades_an_existing_employee_cache(self) -> None:
         path = Path(self.temp_dir.name) / "old-directory.db"
@@ -320,7 +415,7 @@ class SchedulerSecurityAndWebTests(unittest.TestCase):
         self.assertIn('api("/api/model-config"', script)
         self.assertIn('api("/api/model-config/test"', script)
         self.assertIn("styles.css?v=20260901a", html)
-        self.assertIn("app.js?v=20260901a", html)
+        self.assertIn("app.js?v=20260904a", html)
         self.assertIn('data-route="personal-reports"', html)
         self.assertIn('data-page="personal-reports"', html)
         self.assertIn('id="personalCharts"', html)
@@ -329,6 +424,7 @@ class SchedulerSecurityAndWebTests(unittest.TestCase):
         self.assertIn("personal-edit-button", script)
         self.assertIn("personal-donut", script)
         self.assertIn('id="personalEditDialog"', html)
+        self.assertIn('id="saturdayFinalPersonalTargets"', html)
         self.assertIn('id="reportEditTitle"', html)
         self.assertIn('data-report-category-key', script)
         self.assertIn('api(`/api/personal-reports/${activePersonalReport.reportId}`', script)

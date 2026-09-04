@@ -214,8 +214,16 @@ def readiness(_: str = Depends(_admin_token)) -> dict[str, Any]:
     callback_auth = bool(settings.dingtalk_callback_token.strip()) or not settings.production_like
     preview_targets = len(config["previewGroupTargets"]) + len(config["previewPersonalTargets"])
     formal_targets = len(config["formalGroupTargets"]) + len(config["formalPersonalTargets"])
+    saturday_final_targets = len(
+        [
+            item for item in config.get("saturdayFinalPersonalTargets") or []
+            if isinstance(item, dict) and item.get("enabled") is not False
+        ]
+    )
     public_links = bool(settings.public_base_url.strip() and settings.public_link_secret.strip())
-    delivery_ready = bool(preview_targets and formal_targets and config["approverTargets"])
+    delivery_ready = bool(
+        preview_targets and formal_targets and config["approverTargets"] and saturday_final_targets == 1
+    )
     archive_enabled = bool(config.get("archiveWriteEnabled"))
     archive_ready = bool(
         not archive_enabled
@@ -276,6 +284,7 @@ def readiness(_: str = Depends(_admin_token)) -> dict[str, Any]:
                 "preview": preview_targets,
                 "formal": formal_targets,
                 "approvers": len(config["approverTargets"]),
+                "saturdayFinal": saturday_final_targets,
             },
             "archive": {
                 "enabled": archive_enabled,
@@ -286,12 +295,11 @@ def readiness(_: str = Depends(_admin_token)) -> dict[str, Any]:
             "scheduler": {
                 "processEnabled": settings.scheduler_enabled,
                 "workflowEnabled": bool(config.get("enabled")),
-                "autoGenerateEnabled": bool(config.get("autoGenerateEnabled")),
-                "autoPreviewEnabled": bool(config.get("autoPreviewEnabled")),
+                "weekendSchedule": "Saturday 09:00 test / Saturday 17:00 private final / Sunday 20:00 approved formal",
                 "teambitionSyncEnabled": bool(
                     settings.teambition_sync_enabled and config.get("teambitionSyncEnabled")
                 ),
-                "formalSendAlwaysManual": True,
+                "formalSendRequiresApproval": True,
             },
             "basePath": settings.normalized_base_path,
             "directoryCache": directory,
