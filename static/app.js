@@ -639,7 +639,13 @@
     $("#reportDirtyHint").className = "";
     const categorySections = report.sections?.categorySections || [];
     $("#reportCategorySections").innerHTML = categorySections.length ? categorySections.map((section) => `<label data-report-category-key="${escapeHtml(section.key || "")}"><span><strong>${escapeHtml(section.label || "未分类")}</strong><small>${section.itemCount || 0} 项 · 风险 ${section.riskCount || 0} · 逾期 ${section.overdueCount || 0}</small></span><textarea maxlength="12000">${escapeHtml(section.digest || section.content || "")}</textarea></label>`).join("") : '<p class="muted">本版没有结构化分类，事实清单仍可正常查看。</p>';
-    $("#reportSources").innerHTML = (report.sources || []).length ? report.sources.map((item) => `<article><strong>${escapeHtml(item.title || "未命名事项")}</strong><span>${escapeHtml(item.category || "")} · ${escapeHtml(item.status || "未标记")}</span><p>${escapeHtml(item.progressText || item.planText || item.riskText || "暂无详情")}</p></article>`).join("") : '<p class="muted">本版周报未纳入事实记录。</p>';
+    $("#reportSources").innerHTML = (report.sources || []).length ? report.sources.map((item, index) => {
+      const itemKey = `${item.tableId || ""}:${item.recordId || item.id || ""}`;
+      const assignees = (item.assignees || []).map((person) => `${person.name || ""}|${person.userId || ""}|${person.role || "负责人"}`).join("\n");
+      const tb = item.teambitionProject || {};
+      const tbReadonly = Object.keys(tb).length ? `<div class="personal-tb-readonly full-span"><strong>TB 项目状态（官方来源，只读）</strong><span>${escapeHtml(tb.statusName || "已关联 TB 重点项目")}</span><p>${escapeHtml(tb.statusSummary || tb.statusContent || "暂无状态正文")}</p></div>` : "";
+      return `<details class="personal-item-editor" data-report-source-key="${escapeHtml(itemKey)}" ${index < 2 ? "open" : ""}><summary><span><strong>${escapeHtml(item.title || "未命名事项")}</strong><small>${escapeHtml(item.category || "未分类")} · ${escapeHtml(item.status || "未标记")}</small></span><em>展开编辑</em></summary><div class="personal-item-editor-grid"><label>分类键<input data-report-source-field="categoryKey" maxlength="12000" value="${escapeHtml(item.categoryKey || "")}"></label><label>分类顺序<input data-report-source-field="categoryOrder" type="number" min="1" max="9999" value="${escapeHtml(item.categoryOrder || 999)}"></label><label>分类<input data-report-source-field="category" maxlength="12000" value="${escapeHtml(item.category || "")}"></label><label>子分类<input data-report-source-field="subcategory" maxlength="12000" value="${escapeHtml(item.subcategory || "")}"></label><label class="full-span">事项标题<input data-report-source-field="title" maxlength="12000" value="${escapeHtml(item.title || "")}"></label><label>状态<input data-report-source-field="status" maxlength="12000" value="${escapeHtml(item.status || "")}"></label><label>优先级<input data-report-source-field="priority" maxlength="12000" value="${escapeHtml(item.priority || "")}"></label><label>事项日期<input data-report-source-field="eventAt" maxlength="12000" value="${escapeHtml(item.eventAt || "")}"></label><label>计划完成日期<input data-report-source-field="dueAt" maxlength="12000" value="${escapeHtml(item.dueAt || "")}"></label><label class="full-span">负责人（每行：姓名|userId|角色）<textarea data-report-source-field="assignees" maxlength="12000">${escapeHtml(assignees)}</textarea></label><label class="full-span">本周进展<textarea data-report-source-field="progressText" maxlength="12000">${escapeHtml(item.progressText || "")}</textarea></label><label class="full-span">下周计划<textarea data-report-source-field="planText" maxlength="12000">${escapeHtml(item.planText || "")}</textarea></label><label class="full-span">风险与问题<textarea data-report-source-field="riskText" maxlength="12000">${escapeHtml(item.riskText || "")}</textarea></label>${tbReadonly}</div></details>`;
+    }).join("") : '<p class="muted">本版周报未纳入事项。</p>';
     reportOriginalEdit = JSON.stringify(currentReportEditPayload());
     $("#reportDialog").showModal();
     return report;
@@ -652,6 +658,11 @@
       categorySections: $$("[data-report-category-key]", $("#reportCategorySections")).map((row) => ({
         key: row.dataset.reportCategoryKey,
         digest: $("textarea", row).value.trim(),
+      })),
+      sourceOverrides: Object.fromEntries($$("[data-report-source-key]", $("#reportSources")).map((row) => {
+        const values = {};
+        $$("[data-report-source-field]", row).forEach((input) => { values[input.dataset.reportSourceField] = input.value.trim(); });
+        return [row.dataset.reportSourceKey, values];
       })),
     },
   });
@@ -1093,6 +1104,7 @@
   SECTION_KEYS.forEach((key) => $(`#section-${key}`).addEventListener("input", updateReportDirtyState));
   $("#reportEditTitle").addEventListener("input", updateReportDirtyState);
   $("#reportCategorySections").addEventListener("input", updateReportDirtyState);
+  $("#reportSources").addEventListener("input", updateReportDirtyState);
   $("#closeReportDialog").addEventListener("click", closeReportEditor);
   $("#cancelSections").addEventListener("click", closeReportEditor);
   $("#reportDialog").addEventListener("cancel", (event) => {

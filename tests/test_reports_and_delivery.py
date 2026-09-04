@@ -222,6 +222,12 @@ class ReportsAndDeliveryTests(unittest.TestCase):
         self.seed_source()
         report = self.reports.generate(period_key="week:20260810", use_ai=False)
         report_id = report["id"]
+        self.db.execute(
+            """
+            INSERT INTO employee_cache(employee_key,user_id,employee_name,refreshed_at)
+            VALUES ('employee:u2','u2','项目乙','2026-08-14T09:00:00+08:00')
+            """
+        )
         category = next(
             item for item in report["sections"]["categorySections"] if item["itemCount"]
         )
@@ -246,6 +252,21 @@ class ReportsAndDeliveryTests(unittest.TestCase):
                 "categorySections": [
                     {"key": category["key"], "digest": "人工分类摘要"}
                 ],
+                "sourceOverrides": {
+                    "PoYFuV8:r1": {
+                        "category": "人工分类",
+                        "subcategory": "重点事项",
+                        "title": "人工调整事项",
+                        "status": "已完成",
+                        "priority": "高",
+                        "progressText": "人工进展",
+                        "planText": "人工计划",
+                        "riskText": "人工风险",
+                        "eventAt": "2026-08-13T09:00:00+08:00",
+                        "dueAt": "2026-08-15T18:00:00+08:00",
+                        "assignees": "产品甲|u1|产品经理\n项目乙|u2|项目负责人",
+                    }
+                },
             },
             actor="editor",
             title="人工编辑周报标题",
@@ -259,6 +280,12 @@ class ReportsAndDeliveryTests(unittest.TestCase):
             if item["key"] == category["key"]
         )
         self.assertEqual("人工分类摘要", edited_category["digest"])
+        edited_source = edited["sources"][0]
+        self.assertEqual("人工调整事项", edited_source["title"])
+        self.assertEqual("人工分类", edited_source["category"])
+        self.assertEqual("已完成", edited_source["status"])
+        self.assertEqual(["u1", "u2"], [item["userId"] for item in edited_source["assignees"]])
+        self.assertEqual(["u2"], edited_source["projectManagerUserIds"])
         self.assertEqual("draft_generated", edited["workflowState"])
         self.assertFalse(edited["imageReady"])
         self.assertEqual("", edited["previewedAt"])
@@ -293,7 +320,7 @@ class ReportsAndDeliveryTests(unittest.TestCase):
         self.assertEqual(1, personal["metrics"]["highPriorityCount"])
         self.assertGreater(personal["version"], edited["version"])
         frozen = self.reports.get(personal["reportId"], include_sources=True)
-        self.assertEqual("版本规划", frozen["sources"][0]["title"])
+        self.assertEqual("人工调整事项", frozen["sources"][0]["title"])
         stored = self.db.fetch_one(
             "SELECT updated_by FROM weekly_report_personal_edit WHERE report_id=? AND user_id='u1'",
             (personal["reportId"],),

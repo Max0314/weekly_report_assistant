@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-import json
 import hashlib
+import json
 import re
 from datetime import datetime, timedelta
 from typing import Any
@@ -38,6 +38,20 @@ PERSONAL_ITEM_EDIT_KEYS = (
     "progressText",
     "planText",
     "riskText",
+)
+TEAM_ITEM_EDIT_KEYS = (
+    "categoryKey",
+    "categoryOrder",
+    "category",
+    "subcategory",
+    "title",
+    "status",
+    "priority",
+    "progressText",
+    "planText",
+    "riskText",
+    "eventAt",
+    "dueAt",
 )
 TB_DEGREE_LABELS = {
     "minor": "轻微",
@@ -1297,6 +1311,61 @@ class ReportService:
         rows = self.db.fetch_all("SELECT * FROM weekly_report ORDER BY created_at DESC, id DESC LIMIT ?", (limit,))
         return [self._format_report(row) for row in rows]
 
+    @staticmethod
+    def _team_item_key(item: dict[str, Any]) -> str:
+        """Return a stable key for one immutable report-snapshot item."""
+        record_id = str(item.get("recordId") or item.get("id") or "").strip()
+        table_id = str(item.get("tableId") or "").strip()
+        return f"{table_id}:{record_id}" if table_id and record_id else record_id
+
+    def _clean_team_assignees(
+        self, value: Any, *, current: dict[str, Any]
+    ) -> list[dict[str, str]]:
+        """Validate explicit owner changes against the cached employee directory.
+
+        Existing historical owners remain valid even if they have since left the
+        active directory.  New owners must come from the read-only bi_center
+        cache, so a report edit cannot fabricate a DingTalk user ID.
+        """
+        if not isinstance(value, str):
+            raise ValueError("assignees must use one line per person: name|userId|role")
+        directory = {
+            str(item.get("user_id") or "").strip(): str(item.get("employee_name") or "").strip()
+            for item in self.db.fetch_all(
+                "SELECT user_id, employee_name FROM employee_cache WHERE is_active=1 AND user_id<>''"
+            )
+            if str(item.get("user_id") or "").strip()
+        }
+        existing = {
+            str(item.get("userId") or "").strip(): str(item.get("name") or "").strip()
+            for item in current.get("assignees") or []
+            if isinstance(item, dict) and str(item.get("userId") or "").strip()
+        }
+        result: list[dict[str, str]] = []
+        seen: set[tuple[str, str]] = set()
+        for raw_line in value.splitlines():
+            parts = [part.strip() for part in raw_line.split("|")]
+            if not any(parts):
+                continue
+            if len(parts) != 3 or not parts[1]:
+                raise ValueError("assignees must use one line per person: name|userId|role")
+            name, user_id, role = parts
+            if user_id not in directory and user_id not in existing:
+                raise ValueError("assignee userId is not present in the active employee directory")
+            normalized_role = (role or "负责人")[:120]
+            key = (user_id, normalized_role)
+            if key in seen:
+                continue
+            seen.add(key)
+            result.append(
+                {
+                    "name": (directory.get(user_id) or existing.get(user_id) or name or user_id)[:300],
+                    "userId": user_id[:300],
+                    "role": normalized_role,
+                }
+            )
+        return result
+
     def update_sections(
         self,
         report_id: int,
@@ -1309,7 +1378,7 @@ class ReportService:
         if report["workflowState"] in NON_EDITABLE_STATES:
             raise ValueError("final or superseded report cannot be edited")
         report_id = self._begin_revision(report_id, actor=actor)
-        report = self.get(report_id)
+        report = self.get(report_id, include_sources=True)
         merged = {**report["sections"]}
         for key in EDITABLE_SECTION_KEYS:
             if key in sections:
@@ -1337,13 +1406,81 @@ class ReportService:
                     }
                 )
             merged["categorySections"] = categories
+        source_overrides = sections.get("sourceOverrides")
+        snapshot = [
+            {**item}
+            for item in report.get("sources") or []
+            if isinstance(item, dict)
+        ]
+        if isinstance(source_overrides, dict):
+            record_counts: dict[str, int] = {}
+            for item in snapshot:
+                record_id = str(item.get("recordId") or item.get("id") or "").strip()
+                if record_id:
+                    record_counts[record_id] = record_counts.get(record_id, 0) + 1
+            editable: dict[str, dict[str, Any]] = {}
+            for item in snapshot:
+                item_key = self._team_item_key(item)
+                if item_key:
+                    editable[item_key] = item
+                record_id = str(item.get("recordId") or item.get("id") or "").strip()
+                if record_id and record_counts.get(record_id) == 1:
+                    editable[record_id] = item
+            for item_key, raw_override in source_overrides.items():
+                item = editable.get(str(item_key or "").strip())
+                if not item or not isinstance(raw_override, dict):
+                    continue
+                for key in TEAM_ITEM_EDIT_KEYS:
+                    if key not in raw_override:
+                        continue
+                    if key == "categoryOrder":
+                        try:
+                            item[key] = max(1, min(9999, int(raw_override.get(key))))
+                        except (TypeError, ValueError):
+                            item[key] = int(item.get(key) or 999)
+                    else:
+                        item[key] = str(raw_override.get(key) or "").strip()[:12000]
+                if "assignees" in raw_override:
+                    assignees = self._clean_team_assignees(raw_override.get("assignees"), current=item)
+                    item["assignees"] = assignees
+                    product = [entry for entry in assignees if "产品" in str(entry.get("role") or "")]
+                    project = [entry for entry in assignees if "项目" in str(entry.get("role") or "")]
+                    item["productManagerUserIds"] = [entry["userId"] for entry in product]
+                    item["productManagerNames"] = [entry["name"] for entry in product]
+                    item["projectManagerUserIds"] = [entry["userId"] for entry in project]
+                    item["projectManagerNames"] = [entry["name"] for entry in project]
+        snapshot = [self._hydrate_source(item) for item in snapshot]
+        metrics = self._metrics(snapshot)
+        coverage = self._manager_coverage(
+            window=report["window"], items=snapshot, report_kind=report["reportKind"]
+        )
+        metrics["coverage"] = {
+            "expectedCount": coverage["expectedCount"],
+            "coveredCount": coverage["coveredCount"],
+            "missingCount": coverage["missingCount"],
+        }
+        saved_digests = {
+            str(item.get("key") or ""): str(item.get("digest") or "")
+            for item in merged.get("categorySections") or []
+            if isinstance(item, dict) and str(item.get("key") or "")
+        }
+        merged["categorySections"] = [
+            {
+                **category,
+                **({"digest": saved_digests[category["key"]]} if category.get("key") in saved_digests else {}),
+            }
+            for category in self._category_sections(
+                snapshot, include_empty=True, report_kind=report["reportKind"]
+            )
+        ]
         normalized_title = report["title"] if title is None else str(title or "").strip()
         if not normalized_title:
             raise ValueError("report title cannot be empty")
         timestamp = to_db(now_local())
         self.db.execute(
             """
-            UPDATE weekly_report SET title=?,sections_json=?,workflow_state='draft_generated',
+            UPDATE weekly_report SET title=?,sections_json=?,metrics_json=?,source_snapshot_json=?,coverage_json=?,
+                workflow_state='draft_generated',
                 previewed_at='',confirm_status='',confirmed_by='',confirmed_at='',
                 change_request='',image_path='',image_generated_at='',
                 send_status='',send_error='',sent_at='',updated_at=? WHERE id=?
@@ -1351,6 +1488,9 @@ class ReportService:
             (
                 normalized_title[:200],
                 json.dumps(merged, ensure_ascii=False),
+                json.dumps(metrics, ensure_ascii=False, separators=(",", ":")),
+                json.dumps(snapshot, ensure_ascii=False, separators=(",", ":")),
+                json.dumps(coverage, ensure_ascii=False, separators=(",", ":")),
                 timestamp,
                 int(report_id),
             ),

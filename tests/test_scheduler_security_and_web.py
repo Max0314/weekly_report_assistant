@@ -415,7 +415,7 @@ class SchedulerSecurityAndWebTests(unittest.TestCase):
         self.assertIn('api("/api/model-config"', script)
         self.assertIn('api("/api/model-config/test"', script)
         self.assertIn("styles.css?v=20260901a", html)
-        self.assertIn("app.js?v=20260904a", html)
+        self.assertIn("app.js?v=20260904b", html)
         self.assertIn('data-route="personal-reports"', html)
         self.assertIn('data-page="personal-reports"', html)
         self.assertIn('id="personalCharts"', html)
