@@ -10,7 +10,15 @@ from unittest.mock import patch
 from fastapi import FastAPI, HTTPException
 from fastapi.testclient import TestClient
 
-from app.api import PersonalEditBody, personal_report_context, readiness, router, update_personal_report
+from app.api import (
+    PersonalEditBody,
+    get_personal_report,
+    open_personal_report,
+    personal_report_context,
+    readiness,
+    router,
+    update_personal_report,
+)
 from app.config import Settings, settings
 from app.db import Database
 from app.services.directory import directory_service
@@ -45,6 +53,7 @@ class SchedulerSecurityAndWebTests(unittest.TestCase):
         ]
         with patch("app.api._personal_full_scope", return_value=True), patch("app.api.report_service") as reports, patch("app.api.directory_service") as directory:
             reports.personal_report_options.return_value = [{"id": 7}]
+            reports.resolve_personal_report_id.return_value = 7
             reports.personal_members.return_value = report_members
             directory.accessible_people.return_value = directory_people
             context = personal_report_context(report_id=7, identity=identity)
@@ -75,6 +84,48 @@ class SchedulerSecurityAndWebTests(unittest.TestCase):
             result = update_personal_report(7, own_body, identity)
         self.assertTrue(result["canEdit"])
         reports.update_personal.assert_called_once()
+
+    def test_personal_context_and_detail_resolve_stale_report_and_hide_editing(self) -> None:
+        identity = AdminIdentity(user_id="viewer", name="普通成员")
+        with patch("app.api._personal_full_scope", return_value=False), patch("app.api.report_service") as reports, patch("app.api.directory_service") as directory:
+            reports.personal_report_options.return_value = [{"id": 8}, {"id": 7}]
+            reports.resolve_personal_report_id.return_value = 8
+            reports.personal_members.return_value = [
+                {"userId": "viewer", "name": "普通成员", "itemCount": 1, "roles": ["产品经理"]}
+            ]
+            directory.accessible_people.return_value = [
+                {"userId": "viewer", "name": "普通成员", "department": "产品部"}
+            ]
+            context = personal_report_context(report_id=7, identity=identity)
+            self.assertEqual(8, context["selectedReportId"])
+            self.assertEqual(7, context["resolvedFromReportId"])
+            reports.personal_members.assert_called_with(8)
+
+            reports.resolve_personal_report_id.return_value = 7
+            reports.personal.return_value = {
+                "reportId": 7,
+                "workflowState": "superseded",
+                "person": {"userId": "viewer", "name": "普通成员"},
+            }
+            directory.can_view_person.return_value = True
+            directory.lookup_by_user_id.return_value = {}
+            detail = get_personal_report(report_id=7, user_id="viewer", identity=identity)
+            self.assertFalse(detail["canEdit"])
+
+    def test_personal_preview_redirect_uses_latest_editable_revision(self) -> None:
+        with patch("app.api.report_service") as reports, patch("app.api.report_renderer") as renderer:
+            reports.resolve_personal_report_id.return_value = 8
+            renderer.personal_report_app_url.return_value = (
+                "https://example.test/weekly-assistant/#/personal-reports?reportId=8"
+            )
+            response = open_personal_report(7)
+
+        self.assertEqual(302, response.status_code)
+        self.assertEqual(
+            "https://example.test/weekly-assistant/#/personal-reports?reportId=8",
+            response.headers["location"],
+        )
+        reports.resolve_personal_report_id.assert_called_once_with(7)
 
     def test_source_snapshot_requires_latest_success_and_fresh_data(self) -> None:
         scheduler = SchedulerService(database=self.db)
@@ -415,14 +466,17 @@ class SchedulerSecurityAndWebTests(unittest.TestCase):
         self.assertIn('api("/api/model-config"', script)
         self.assertIn('api("/api/model-config/test"', script)
         self.assertIn("styles.css?v=20260901a", html)
-        self.assertIn("app.js?v=20260904b", html)
+        self.assertIn("app.js?v=20260906a", html)
         self.assertIn('data-route="personal-reports"', html)
         self.assertIn('data-page="personal-reports"', html)
         self.assertIn('id="personalCharts"', html)
         self.assertIn('id="personalMemberSearch"', html)
         self.assertIn("personal-external-link", script)
         self.assertIn("personal-edit-button", script)
-        self.assertIn("personal-donut", script)
+        self.assertNotIn("personal-donut", script)
+        self.assertNotIn("<h3>工作进展</h3>", script)
+        self.assertIn('superseded: "已失效"', script)
+        self.assertIn("已自动切换到同周期最新可编辑版本", script)
         self.assertIn('id="personalEditDialog"', html)
         self.assertIn('id="saturdayFinalPersonalTargets"', html)
         self.assertIn('id="reportEditTitle"', html)

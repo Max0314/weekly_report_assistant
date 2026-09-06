@@ -327,6 +327,54 @@ class ReportsAndDeliveryTests(unittest.TestCase):
         )
         self.assertEqual("dingtalk:u1", stored["updated_by"])
 
+    def test_stale_personal_edits_rebase_on_latest_revision_and_preserve_other_users(self) -> None:
+        self.seed_source()
+        self.db.execute(
+            """
+            UPDATE source_record
+            SET product_manager_user_ids_json='["u1","u2"]',
+                product_manager_names_json='["产品甲","产品乙"]'
+            WHERE record_id='r1'
+            """
+        )
+        original = self.reports.generate(period_key="week:20260810", use_ai=False)
+
+        first = self.reports.update_personal(
+            original["id"],
+            user_id="u1",
+            summary="产品甲已保存",
+            category_digests={},
+            item_overrides={"r1": {"progressText": "甲的进展"}},
+            actor="dingtalk:u1",
+        )
+        self.assertEqual(first["reportId"], self.reports.resolve_personal_report_id(original["id"]))
+
+        second = self.reports.update_personal(
+            original["id"],
+            user_id="u2",
+            summary="产品乙从旧链接保存",
+            category_digests={},
+            item_overrides={"r1": {"progressText": "乙的进展"}},
+            actor="dingtalk:u2",
+        )
+
+        self.assertGreater(second["version"], first["version"])
+        self.assertEqual(second["reportId"], self.reports.resolve_personal_report_id(original["id"]))
+        self.assertEqual(
+            "产品甲已保存",
+            self.reports.personal(second["reportId"], user_id="u1")["summary"],
+        )
+        self.assertEqual("产品乙从旧链接保存", second["summary"])
+        self.assertEqual(
+            2,
+            len(
+                self.db.fetch_all(
+                    "SELECT user_id FROM weekly_report_personal_edit WHERE report_id=?",
+                    (second["reportId"],),
+                )
+            ),
+        )
+
     def test_project_manager_coverage_combines_roster_and_weekly_facts(self) -> None:
         refreshed_at = "2026-08-13T09:00:00+08:00"
         for user_id, name in (("u-covered", "已填经理"), ("u-missing", "缺报经理")):

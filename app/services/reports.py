@@ -171,7 +171,13 @@ class ReportService:
         )
         return digest
 
-    def _begin_revision(self, report_id: int, *, actor: str) -> int:
+    def _begin_revision(
+        self,
+        report_id: int,
+        *,
+        actor: str,
+        rebase_superseded: bool = False,
+    ) -> int:
         """Clone the current editable report into a fresh, unapproved revision.
 
         A save must never mutate an already previewed/approved payload in place:
@@ -179,19 +185,38 @@ class ReportService:
         content.  Personal overrides are copied so a later team edit does not
         silently discard a colleague's saved personal report.
         """
-        original = self.db.fetch_one("SELECT * FROM weekly_report WHERE id=?", (int(report_id),))
-        if not original:
-            raise ValueError("weekly report not found")
-        if str(original.get("workflow_state") or "") in NON_EDITABLE_STATES:
-            raise ValueError("final or superseded report cannot be edited")
-        latest = self.latest(
-            period_key=str(original.get("period_key") or ""),
-            report_kind=str(original.get("report_kind") or "combined"),
-        )
-        if not latest or int(latest["id"]) != int(report_id):
-            raise ValueError("only the latest report version can be edited")
         timestamp = to_db(now_local())
         with self.db.transaction() as connection:
+            original_row = connection.execute(
+                "SELECT * FROM weekly_report WHERE id=?", (int(report_id),)
+            ).fetchone()
+            if not original_row:
+                raise ValueError("weekly report not found")
+            requested = dict(original_row)
+            latest_row = connection.execute(
+                """
+                SELECT * FROM weekly_report
+                WHERE period_key=? AND report_kind=?
+                ORDER BY version DESC LIMIT 1
+                """,
+                (
+                    str(requested.get("period_key") or ""),
+                    str(requested.get("report_kind") or "combined"),
+                ),
+            ).fetchone()
+            if not latest_row:
+                raise ValueError("weekly report not found")
+            original = dict(latest_row)
+            if int(original.get("id") or 0) != int(report_id):
+                if not (
+                    rebase_superseded
+                    and str(requested.get("workflow_state") or "") == "superseded"
+                    and str(original.get("workflow_state") or "") not in NON_EDITABLE_STATES
+                ):
+                    raise ValueError("only the latest report version can be edited")
+            if str(original.get("workflow_state") or "") in NON_EDITABLE_STATES:
+                raise ValueError("final or superseded report cannot be edited")
+            base_report_id = int(original.get("id") or 0)
             max_row = connection.execute(
                 "SELECT MAX(version) AS version FROM weekly_report WHERE period_key=? AND report_kind=?",
                 (str(original.get("period_key") or ""), str(original.get("report_kind") or "combined")),
@@ -254,7 +279,7 @@ class ReportService:
                 SELECT ?,user_id,summary,category_digests_json,item_overrides_json,updated_by,updated_at
                 FROM weekly_report_personal_edit WHERE report_id=?
                 """,
-                (new_report_id, int(report_id)),
+                (new_report_id, base_report_id),
             )
             connection.execute(
                 """
@@ -262,7 +287,7 @@ class ReportService:
                 SET workflow_state='superseded', confirm_status='invalidated', updated_at=?
                 WHERE id=?
                 """,
-                (timestamp, int(report_id)),
+                (timestamp, base_report_id),
             )
         return new_report_id
 
@@ -1146,7 +1171,6 @@ class ReportService:
         metrics["byRole"] = role_counts
         generated_summary = (
             f"{display_name or normalized_user_id}本周共关联 {metrics['itemCount']} 项工作；"
-            f"已完成 {completed} 项、进行中或待处理 {metrics['inProgressCount']} 项，"
             f"风险 {metrics['riskCount']} 项、逾期 {metrics['overdueCount']} 项、"
             f"高优先级 {metrics['highPriorityCount']} 项。"
         )
@@ -1174,6 +1198,21 @@ class ReportService:
             },
         }
 
+    def resolve_personal_report_id(self, report_id: int) -> int:
+        """Resolve a stale personal-report link to this period's editable revision."""
+        requested = self.get(report_id)
+        if requested.get("reportKind") != "combined":
+            return int(report_id)
+        if requested.get("workflowState") != "superseded":
+            return int(report_id)
+        latest = self.latest(
+            period_key=str(requested.get("periodKey") or ""),
+            report_kind="combined",
+        )
+        if latest and latest.get("workflowState") not in NON_EDITABLE_STATES:
+            return int(latest["id"])
+        return int(report_id)
+
     def update_personal(
         self,
         report_id: int,
@@ -1184,13 +1223,17 @@ class ReportService:
         item_overrides: dict[str, Any],
         actor: str,
     ) -> dict[str, Any]:
-        report = self.get(report_id)
-        if report["workflowState"] in NON_EDITABLE_STATES:
-            raise ValueError("final or superseded report cannot be edited")
-        report_id = self._begin_revision(report_id, actor=actor)
         normalized_user_id = str(user_id or "").strip()
         if not normalized_user_id:
             raise ValueError("personal report user is required")
+        requested = self.get(report_id)
+        if requested.get("reportKind") != "combined":
+            raise ValueError("personal reports must be derived from a combined report")
+        report_id = self._begin_revision(
+            report_id,
+            actor=actor,
+            rebase_superseded=True,
+        )
         current = self.personal(report_id, user_id=normalized_user_id)
         allowed_items = {
             str(item.get("recordId") or item.get("id") or "").strip()

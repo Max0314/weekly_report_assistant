@@ -24,7 +24,7 @@ from .services.delivery import delivery_service
 from .services.directory import directory_service
 from .services.model_config import ModelConfigError, model_config_service
 from .services.rendering import report_html, report_renderer
-from .services.reports import FINAL_STATES, REPORT_KINDS, report_service
+from .services.reports import NON_EDITABLE_STATES, REPORT_KINDS, report_service
 from .services.robot_commands import robot_command_service
 from .services.scheduler import scheduler_service
 from .services.teambition import teambition_service
@@ -542,9 +542,17 @@ def personal_report_context(
     identity: AdminIdentity = Depends(_session_identity),
 ) -> dict[str, Any]:
     reports = report_service.personal_report_options(limit=52)
-    selected_report_id = int(report_id or (reports[0]["id"] if reports else 0))
-    if report_id and selected_report_id not in {int(item["id"]) for item in reports}:
+    requested_report_id = int(report_id or (reports[0]["id"] if reports else 0))
+    if report_id and requested_report_id not in {int(item["id"]) for item in reports}:
         raise HTTPException(status_code=404, detail="综合周报不存在")
+    try:
+        selected_report_id = (
+            report_service.resolve_personal_report_id(requested_report_id)
+            if requested_report_id
+            else 0
+        )
+    except Exception as exc:
+        _raise_api_error(exc)
     full_scope = _personal_full_scope(identity)
     allowed = {
         str(item.get("userId") or ""): item
@@ -597,6 +605,9 @@ def personal_report_context(
     return {
         "viewer": {"userId": identity.user_id, "name": identity.name},
         "selectedReportId": selected_report_id,
+        "resolvedFromReportId": (
+            requested_report_id if requested_report_id != selected_report_id else 0
+        ),
         "defaultUserId": default_user_id,
         "viewerHasReport": any(
             item["isSelf"] and int(item.get("itemCount") or 0) > 0 for item in members
@@ -619,13 +630,15 @@ def get_personal_report(
         raise HTTPException(status_code=403, detail="无权查看该成员的个人周报")
     person = directory_service.lookup_by_user_id().get(target_user_id, {})
     try:
+        resolved_report_id = report_service.resolve_personal_report_id(report_id)
         result = report_service.personal(
-            report_id,
+            resolved_report_id,
             user_id=target_user_id,
             name=str(person.get("employee_name") or (identity.name if target_user_id == identity.user_id else "")),
         )
+        result["resolvedFromReportId"] = report_id if resolved_report_id != report_id else 0
         result["canEdit"] = (
-            result.get("workflowState") not in FINAL_STATES
+            result.get("workflowState") not in NON_EDITABLE_STATES
             and (target_user_id == identity.user_id or full_scope)
         )
         return result
@@ -652,7 +665,7 @@ def update_personal_report(
             item_overrides=body.itemOverrides,
             actor=identity.actor,
         )
-        result["canEdit"] = True
+        result["canEdit"] = result.get("workflowState") not in NON_EDITABLE_STATES
         return result
     except Exception as exc:
         _raise_api_error(exc)
@@ -813,7 +826,7 @@ def public_report(report_id: int, expires: int, token: str) -> HTMLResponse:
             personal_report_url=report_renderer.personal_report_url(report_id),
             edit_report_url=(
                 report_renderer.edit_report_app_url(report_id)
-                if report.get("workflowState") not in FINAL_STATES
+                if report.get("workflowState") not in NON_EDITABLE_STATES
                 else ""
             ),
         )
@@ -823,10 +836,10 @@ def public_report(report_id: int, expires: int, token: str) -> HTMLResponse:
 @router.get("/api/public/personal-reports/{report_id}/open", include_in_schema=False)
 def open_personal_report(report_id: int) -> RedirectResponse:
     try:
-        report_service.get(report_id)
+        resolved_report_id = report_service.resolve_personal_report_id(report_id)
     except Exception as exc:
         _raise_api_error(exc)
-    target = report_renderer.personal_report_app_url(report_id)
+    target = report_renderer.personal_report_app_url(resolved_report_id)
     if not target:
         raise HTTPException(status_code=503, detail="personal report login is not configured")
     return RedirectResponse(target, status_code=302)

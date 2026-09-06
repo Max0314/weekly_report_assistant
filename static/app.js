@@ -25,7 +25,7 @@
   const STATUS_LABELS = {
     draft_generated: "待编辑", rendered: "已生成图片", awaiting_approval: "待确认", approved: "已确认",
     formal_sent: "已正式发送", need_changes: "待修改", retryable_error: "可重试",
-    recalled: "已撤回", cancelled: "已取消",
+    recalled: "已撤回", cancelled: "已取消", superseded: "已失效",
   };
   const KIND_LABELS = {combined: "综合版", product: "产品经理版", project: "项目经理版"};
   const PROJECT_STATUS = {active: "进行中", waiting: "等待需求", paused: "暂停", done: "已完成"};
@@ -371,33 +371,15 @@
     $("#personalHero").innerHTML = `<div><span>PERSONAL WEEKLY REPORT</span><h2>${escapeHtml(person.name || "个人周报")}</h2><p>${escapeHtml(data.window?.label || data.periodKey || "")} · 团队周报 v${data.version || 0}${data.edit?.edited ? ` · 已编辑 ${escapeHtml(String(data.edit.updatedAt || "").replace("T", " ").slice(0, 16))}` : ""}</p></div><div class="personal-hero-actions"><div class="personal-hero-tag">${escapeHtml(statusLabel(data.workflowState))}</div>${data.canEdit ? '<button class="personal-edit-button" data-personal-edit type="button">✎ 编辑个人周报</button>' : ""}<a class="personal-external-link" href="${escapeHtml(externalHref)}" target="_blank" rel="noopener noreferrer">外部打开 ↗</a></div>`;
     const cards = [
       ["关联事项", metrics.itemCount || 0, `涉及 ${Object.keys(metrics.byCategory || {}).length} 个分类`],
-      ["已完成", metrics.completedCount || 0, `进行中/待处理 ${metrics.inProgressCount || 0}`],
       ["风险事项", metrics.riskCount || 0, "按事实状态识别"],
       ["逾期事项", metrics.overdueCount || 0, "未关闭且已过截止"],
       ["高优先级", metrics.highPriorityCount || 0, "高或紧急"],
       ["承担角色", Object.keys(metrics.byRole || {}).length, Object.entries(metrics.byRole || {}).map(([role, count]) => `${role} ${count}`).join(" · ") || "暂无归属"],
     ];
     $("#personalStats").innerHTML = cards.map(([label, value, detail]) => `<article class="metric-card"><span>${escapeHtml(label)}</span><strong>${escapeHtml(value)}</strong><small>${escapeHtml(detail)}</small></article>`).join("");
-    const total = Number(metrics.itemCount || 0);
-    const completed = Number(metrics.completedCount || 0);
-    const inProgress = Number(metrics.inProgressCount || 0);
-    const risks = Number(metrics.riskCount || 0);
-    const completionRate = total ? Math.round((completed / total) * 100) : 0;
-    const riskRate = total ? Math.round((risks / total) * 100) : 0;
     const categories = Object.entries(metrics.byCategory || {}).sort((a, b) => Number(b[1]) - Number(a[1])).slice(0, 6);
     const categoryMax = Math.max(1, ...categories.map(([, count]) => Number(count || 0)));
     $("#personalCharts").innerHTML = `
-      <article class="panel personal-chart-card">
-        <div class="personal-chart-head"><div><p class="eyebrow">PROGRESS</p><h3>工作进展</h3></div><span>${total} 项</span></div>
-        <div class="personal-progress-chart">
-          <div class="personal-donut" style="--complete-angle:${completionRate * 3.6}deg"><div><strong>${completionRate}%</strong><small>完成率</small></div></div>
-          <div class="personal-chart-legend">
-            <div><i class="done"></i><span>已完成</span><strong>${completed}</strong></div>
-            <div><i class="active"></i><span>进行中/待处理</span><strong>${inProgress}</strong></div>
-            <div><i class="risk"></i><span>风险占比</span><strong>${riskRate}%</strong></div>
-          </div>
-        </div>
-      </article>
       <article class="panel personal-chart-card">
         <div class="personal-chart-head"><div><p class="eyebrow">DISTRIBUTION</p><h3>工作分类分布</h3></div><span>${categories.length} 类</span></div>
         <div class="personal-bar-list">${categories.length ? categories.map(([label, count]) => `<div class="personal-bar-row"><span>${escapeHtml(label)}</span><div><i style="width:${Math.max(6, Math.round((Number(count || 0) / categoryMax) * 100))}%"></i></div><strong>${Number(count || 0)}</strong></div>`).join("") : '<p class="muted">本周期暂无分类数据。</p>'}</div>
@@ -431,6 +413,7 @@
     const data = await api(`/api/personal-reports/${reportId}?${params.toString()}`);
     activePersonalReport = data;
     activePersonalUserId = data.person?.userId || userId || currentIdentityUserId;
+    if ($("#personalReportPeriod") && data.reportId) $("#personalReportPeriod").value = String(data.reportId);
     updatePersonalReportRoute(data.reportId || reportId, activePersonalUserId);
     renderPersonalMembers();
     renderPersonalReport(data);
@@ -494,6 +477,9 @@
     if (!sessionAuthenticated) throw new Error("个人周报需要使用钉钉账号登录");
     const suffix = reportId ? `?report_id=${encodeURIComponent(reportId)}` : "";
     personalContext = await api(`/api/personal-reports/context${suffix}`);
+    if (personalContext.resolvedFromReportId) {
+      showToast("原周报版本已失效，已自动切换到同周期最新可编辑版本。", "success");
+    }
     const reports = personalContext.reports || [];
     const selected = Number(personalContext.selectedReportId || reports[0]?.id || 0);
     $("#personalReportPeriod").innerHTML = reports.length ? reports.map((item) => `<option value="${item.id}" ${Number(item.id) === selected ? "selected" : ""}>${escapeHtml(item.window?.label || item.periodKey)} · v${item.version}</option>`).join("") : '<option value="">暂无综合周报</option>';
