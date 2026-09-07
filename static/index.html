@@ -97,7 +97,7 @@
               <ol class="process-list">
                 <li><span>1</span><div><strong>同步事实</strong><p>读取 9 张 AI 表，并为重点项目补充 TB 状态。</p></div></li>
                 <li><span>2</span><div><strong>生成与修订</strong><p>程序计算指标，按多维表业务分类生成汇总。</p></div></li>
-                <li><span>3</span><div><strong>预览与确认</strong><p>测试目标先看，确认人审核后正式发送。</p></div></li>
+                <li><span>3</span><div><strong>预览与正式发送</strong><p>测试目标先核对，周日 20:00 自动发送最新综合版。</p></div></li>
               </ol>
             </section>
           </div>
@@ -140,7 +140,7 @@
               <label class="toggle-card"><input id="teambitionIncludeInReports" type="checkbox"><span><strong>补充重点项目状态</strong><small>仅匹配多维表“重点项目跟踪”中的项目，读取 TB 项目状态并补充周报。</small></span></label>
             </div>
             <div class="form-grid two-cols top-gap">
-              <label>同步间隔（分钟）<input id="teambitionSyncInterval" type="number" min="15" max="1440"><small class="field-help">与 AI 表同步分开调度；正式推送仍必须人工确认。</small></label>
+              <label>同步间隔（分钟）<input id="teambitionSyncInterval" type="number" min="15" max="1440"><small class="field-help">与 AI 表同步分开调度；周日 20:00 正式发送前使用最新已同步状态。</small></label>
               <label>部门范围<textarea id="teambitionDepartments" rows="4" placeholder="每行一个部门"></textarea><small class="field-help">按 bi_center 主部门或业务组精确匹配；留空表示全部在职人员，不建议用于正式环境。</small></label>
             </div>
           </section>
@@ -208,7 +208,7 @@
       <section class="page" data-page="reports" hidden>
         <div class="page-width">
           <section class="page-hero compact-hero">
-            <div><p class="eyebrow">REPORT CENTER</p><h2>周报展示</h2><p>查看当前成稿、正式版本和历史记录，并完成编辑、预览与审核。</p></div>
+            <div><p class="eyebrow">REPORT CENTER</p><h2>周报展示</h2><p>查看当前成稿、正式版本和历史记录，并在周日自动发送前完成编辑与核对。</p></div>
             <div class="actions"><button id="openLatestReport" class="ghost" type="button" disabled>外部打开最新周报 ↗</button><button data-action="sync-source" class="secondary" type="button">同步事实</button><select id="reportKind" aria-label="周报类型"><option value="combined">综合版</option><option value="product">产品经理版</option><option value="project">项目经理版</option></select><button data-action="generate" type="button">生成新周报</button></div>
           </section>
 
@@ -349,21 +349,21 @@
       <section class="page" data-page="delivery" hidden>
         <div class="page-width">
           <section class="page-hero compact-hero">
-            <div><p class="eyebrow">DELIVERY CONTROL</p><h2>推送设置</h2><p>测试目标、正式目标和周报确认人相互独立，正式发送始终需要人工确认。</p></div>
+            <div><p class="eyebrow">DELIVERY CONTROL</p><h2>推送设置</h2><p>测试目标与正式目标相互独立；周日 20:00 自动发送最新综合版，无需确认或审核。</p></div>
             <button id="saveDeliveryConfig" type="button">保存推送设置</button>
           </section>
 
-          <div id="schedulerBanner" class="safety-banner"><span>安全策略</span><strong>读取调度器状态中…</strong><p>周日仅可发送已人工审核且内容哈希未变化的当前综合版。</p></div>
+          <div id="schedulerBanner" class="safety-banner"><span>自动推送</span><strong>读取调度器状态中…</strong><p>周日自动发送内容哈希有效的最新综合版。</p></div>
 
           <section class="panel">
             <div class="section-head"><div><span class="section-index">01</span><h2>机器人与个人接收人</h2><p>个人推送使用默认 Robot Code；人员来自 bi_center 只读目录。</p></div></div>
             <div class="form-grid two-cols"><label>默认 Robot Code<input id="defaultRobotCode" placeholder="ding..."><small class="field-help">企业内部应用机器人的唯一编码，个人消息和未单独填写的群目标均使用它。</small></label><label>搜索人员<div class="inline"><input id="recipientSearch" placeholder="姓名、部门或职位"><button id="searchRecipient" class="secondary" type="button">搜索</button></div><small class="field-help">从本地 bi_center 缓存按姓名、部门、业务组、职位或工号检索。</small></label></div>
             <div class="recipient-picker top-gap"><select id="recipientSelect"><option value="">请先同步或搜索人员</option></select><button data-add-person="previewPersonalTargets" class="secondary" type="button">加入测试接收人</button><button data-add-person="formalPersonalTargets" class="secondary" type="button">加入正式接收人</button><button data-add-person="approverTargets" class="secondary" type="button">设为确认人</button><button data-add-person="saturdayFinalPersonalTargets" class="secondary" type="button">设为周六最终版接收人</button><button id="applyPersonalTarget" type="button">设为个人全流程</button></div>
-            <div class="field-guide compact-guide top-gap"><div><strong>测试接收人</strong><p>只接收预览，不代表允许正式发送。</p></div><div><strong>正式接收人</strong><p>审核通过后接收正式周报。</p></div><div><strong>周报确认人</strong><p>可执行确认、退回和正式发送指令。</p></div><div><strong>周六最终版接收人</strong><p>仅限一人；周六 17:00 按正式样式单聊，不改变审核或正式发送状态。</p></div></div>
+            <div class="field-guide compact-guide top-gap"><div><strong>测试接收人</strong><p>只接收预览，不影响周日正式发送。</p></div><div><strong>正式接收人</strong><p>周日 20:00 接收最新综合版。</p></div><div><strong>周报确认人</strong><p>仍可执行人工确认、退回和提前发送指令，但不再是周日发送条件。</p></div><div><strong>周六最终版接收人</strong><p>仅限一人；周六 17:00 按正式样式单聊，不改变正式发送状态。</p></div></div>
             <div class="target-columns top-gap">
               <div class="target-box"><div><strong>测试接收人</strong><span>接收预览</span></div><div id="previewPersonalTargets" class="target-list"></div></div>
-              <div class="target-box"><div><strong>正式接收人</strong><span>审核后接收</span></div><div id="formalPersonalTargets" class="target-list"></div></div>
-              <div class="target-box"><div><strong>周报确认人</strong><span>可执行确认指令</span></div><div id="approverTargets" class="target-list"></div></div>
+              <div class="target-box"><div><strong>正式接收人</strong><span>周日自动接收</span></div><div id="formalPersonalTargets" class="target-list"></div></div>
+              <div class="target-box"><div><strong>周报确认人</strong><span>可执行人工指令</span></div><div id="approverTargets" class="target-list"></div></div>
               <div class="target-box"><div><strong>周六最终版接收人</strong><span>仅一人</span></div><div id="saturdayFinalPersonalTargets" class="target-list"></div></div>
             </div>
           </section>
@@ -373,20 +373,20 @@
             <div class="field-guide compact-guide"><div><strong>群名称</strong><p>仅用于管理页和日志辨识，可使用易懂名称。</p></div><div><strong>openConversationId</strong><p>钉钉群会话唯一 ID，决定消息发往哪个群。</p></div><div><strong>robotCode</strong><p>在该群发送消息的应用机器人编码，通常与默认 Robot Code 相同。</p></div></div>
             <div class="group-target-grid">
               <div class="group-editor"><div class="group-editor-head"><div><strong>测试群</strong><span>生成后预览与联调</span></div><button data-add-group="previewGroupTargets" class="secondary compact" type="button">新增</button></div><div id="previewGroupTargets" class="group-rows"></div></div>
-              <div class="group-editor"><div class="group-editor-head"><div><strong>正式群</strong><span>确认后正式发布</span></div><button data-add-group="formalGroupTargets" class="secondary compact" type="button">新增</button></div><div id="formalGroupTargets" class="group-rows"></div></div>
+              <div class="group-editor"><div class="group-editor-head"><div><strong>正式群</strong><span>周日 20:00 自动发布</span></div><button data-add-group="formalGroupTargets" class="secondary compact" type="button">新增</button></div><div id="formalGroupTargets" class="group-rows"></div></div>
             </div>
           </section>
 
           <section class="panel">
-            <div class="section-head"><div><span class="section-index">03</span><h2>推送节奏与安全规则</h2><p>可以自动同步、生成和预览；正式发送始终由确认人触发。</p></div></div>
+            <div class="section-head"><div><span class="section-index">03</span><h2>推送节奏与安全规则</h2><p>周日 20:00 自动发送当时的最新综合版；确认和审核不再是前置条件。</p></div></div>
             <div class="form-grid four-cols"><label>生成日期<select id="generateWeekday"><option value="0">周一</option><option value="1">周二</option><option value="2">周三</option><option value="3">周四</option><option value="4">周五</option><option value="5">周六</option><option value="6">周日</option></select><small class="field-help">开启自动生成后，每周在哪一天创建新草稿。</small></label><label>生成时间<input id="generateTime" type="time"><small class="field-help">生成日期当天触发草稿生成的本地时间。</small></label><label>静默开始<input id="quietStartHour" type="number" min="0" max="23"><small class="field-help">每天从该整点起暂停自动预览消息，取值 0–23。</small></label><label>静默结束<input id="quietEndHour" type="number" min="0" max="23"><small class="field-help">每天到该整点恢复自动预览消息，取值 0–23。</small></label></div>
             <div class="toggle-grid top-gap">
               <label class="toggle-card"><input id="autoGenerateEnabled" type="checkbox"><span><strong>自动生成草稿</strong><small>事实快照新鲜时按计划生成。</small></span></label>
               <label class="toggle-card"><input id="autoPreviewEnabled" type="checkbox"><span><strong>自动发送预览</strong><small>只发测试目标，不触发正式发送。</small></span></label>
-              <label class="toggle-card"><input id="requireApproval" type="checkbox"><span><strong>正式发送需要确认</strong><small>确认人审核通过后才能发送。</small></span></label>
-              <label class="toggle-card"><input id="requirePreviewBeforeFormal" type="checkbox"><span><strong>正式发送前必须预览</strong><small>预览成功后才允许审核和正式发送。</small></span></label>
+              <label class="toggle-card is-locked"><input id="requireApproval" type="checkbox" disabled><span><strong>不要求确认或审核</strong><small>人工审核可继续使用，但不会阻止周日自动发送。</small></span></label>
+              <label class="toggle-card is-locked"><input id="requirePreviewBeforeFormal" type="checkbox" disabled><span><strong>不要求先行预览</strong><small>测试群预览用于核对，不是正式发送门槛。</small></span></label>
               <label class="toggle-card"><input id="sendGroupImages" type="checkbox"><span><strong>群消息附带周报图片</strong><small>使用签名公开链接发送渲染图。</small></span></label>
-              <label class="toggle-card is-locked"><input type="checkbox" checked disabled><span><strong>禁止自动正式发送</strong><small>后端强制开启，页面不可关闭。</small></span></label>
+              <label class="toggle-card is-locked"><input type="checkbox" checked disabled><span><strong>周日自动正式发送</strong><small>固定于周日 20:00 发送最新综合版。</small></span></label>
             </div>
           </section>
 
@@ -413,7 +413,7 @@
       <label>需协调与支持<textarea id="section-supportNeeds"></textarea></label>
     </div>
     <section class="dialog-category-section"><div><strong>分类概览摘要</strong><span>每个分类的摘要可以编辑；条目数量、负责人及原始事实仍按本版快照计算。</span></div><div id="reportCategorySections" class="dialog-category-list"></div></section>
-    <div class="dialog-actions"><div class="dialog-action-copy"><strong>编辑团队周报</strong><span id="reportDirtyHint">修改后保存会清除旧图片、预览和审核状态。</span></div><div class="actions"><button id="cancelSections" class="secondary" type="button">取消</button><button id="saveSections" type="button" disabled>保存全部修改</button></div></div>
+    <div class="dialog-actions"><div class="dialog-action-copy"><strong>编辑团队周报</strong><span id="reportDirtyHint">保存后生成新的最新综合版，周日 20:00 将自动发送该版。</span></div><div class="actions"><button id="cancelSections" class="secondary" type="button">取消</button><button id="saveSections" type="button" disabled>保存全部修改</button></div></div>
     <details id="reportSourceDetails" class="source-details"><summary>查看并编辑本版纳入的事实清单</summary><div id="reportSources" class="source-list"></div></details>
   </dialog>
 
@@ -424,9 +424,9 @@
       <section class="dialog-category-section personal-edit-categories"><div><strong>个人分类摘要</strong><span>只影响当前成员的个人周报，不会改写团队统计或多维表原始记录。</span></div><div id="personalEditCategories" class="dialog-category-list"></div></section>
       <section class="dialog-category-section personal-edit-items"><div><strong>个人事项内容</strong><span>可修改标题、状态、优先级、本周进展、下周计划和风险；TB项目状态为官方来源，只读保留。</span></div><div id="personalEditItems" class="personal-item-editor-list"></div></section>
     </div>
-    <div class="dialog-actions"><div class="dialog-action-copy"><strong>编辑个人周报</strong><span id="personalDirtyHint">保存后需要重新预览和审核团队周报。</span></div><div class="actions"><button id="cancelPersonalEdit" class="secondary" type="button">取消</button><button id="savePersonalEdit" type="button" disabled>保存个人周报</button></div></div>
+    <div class="dialog-actions"><div class="dialog-action-copy"><strong>编辑个人周报</strong><span id="personalDirtyHint">保存后生成新的最新综合版，周日 20:00 将自动发送该版。</span></div><div class="actions"><button id="cancelPersonalEdit" class="secondary" type="button">取消</button><button id="savePersonalEdit" type="button" disabled>保存个人周报</button></div></div>
   </dialog>
 
-  <script src="static/app.js?v=20260906a"></script>
+  <script src="static/app.js?v=20260907a"></script>
 </body>
 </html>

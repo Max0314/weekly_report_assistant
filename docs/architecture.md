@@ -12,10 +12,9 @@ flowchart LR
   B --> E["周周期事实筛选与统计"]
   E --> F["确定性草稿 / 可选 AI 文案归纳"]
   F --> G["1480px 周报图片"]
-  G --> H["个人或群预览"]
-  H --> I{"配置的审核人确认？"}
-  I -- 否 --> J["退回修改 / 取消"]
-  I -- 是 --> K["个人或群正式推送"]
+  G --> H["测试群核对 / 周六最终版单聊"]
+  H --> I["继续修改时生成新的最新综合版"]
+  I --> K["周日 20:00 自动向正式目标推送"]
   K --> L["发送日志与撤回键"]
   K --> M["可选：周报存档表幂等回写"]
 ```
@@ -59,11 +58,12 @@ TB 项目严格以多维表重点项目为白名单：项目编号精确匹配�
 
 ## 状态机
 
-`draft_generated → rendered → awaiting_approval → approved → formal_sent`
+主路径为 `draft_generated → rendered → formal_sent`。人工预览和审核仍可记录
+`awaiting_approval → approved`，但不再是周日正式发送的前置条件。
 
-旁路状态为 `need_changes`、`cancelled`、`superseded` 和 `retryable_error`。保存团队或个人内容时，服务复制当前综合版到新版本、复制个人覆盖、使旧版 `superseded` 并清除其可用审核；个人保存允许从同周期 `superseded` 版本安全迁移到最新可编辑版本，版本确认、复制和失效操作在同一个 SQLite `BEGIN IMMEDIATE` 事务中完成，从而保留已经保存的其他成员覆盖。新版本的 `content_hash` 覆盖团队内容、快照、指标和个人覆盖，审核写入 `approved_content_hash`。正式发送必须同时满足“当前综合版、人工审核、两个哈希相等”。消息幂等键由“周报 ID + 阶段 + 目标类型 + 目标 + 消息类型”组成；发送前先在 SQLite 事务中占位，10 分钟内的并发重复调用会被阻断。
+旁路状态为 `need_changes`、`cancelled`、`superseded` 和 `retryable_error`。保存团队或个人内容时，服务复制当前综合版到新版本、复制个人覆盖、使旧版 `superseded` 并清除其旧预览与审核；个人保存允许从同周期 `superseded` 版本安全迁移到最新可编辑版本，版本确认、复制和失效操作在同一个 SQLite `BEGIN IMMEDIATE` 事务中完成，从而保留已经保存的其他成员覆盖。新版本的 `content_hash` 覆盖团队内容、快照、指标和个人覆盖，人工审核仍可写入 `approved_content_hash`。正式发送必须满足“当前综合版且内容哈希有效”，不要求审核哈希。消息幂等键由“周报 ID + 阶段 + 目标类型 + 目标 + 消息类型”组成；发送前先在 SQLite 事务中占位，10 分钟内的并发重复调用会被阻断。
 
-周末任务以 Asia/Shanghai 计算并使用各自 `job_status` 键：`weekend_sat09_test`、`weekend_sat17_final`、`weekend_sun20_formal`。任务重启后在 36 小时补偿窗口内重试失败的同一周期；未审核或版本已变化的周日任务记录 `skipped` 与原因，绝不发送。
+周末任务以 Asia/Shanghai 计算并使用各自 `job_status` 键：`weekend_sat09_test`、`weekend_sat17_final`、`weekend_sun20_formal`。任务重启后在 36 小时补偿窗口内重试失败的同一周期；周日任务读取执行时的最新综合版，不要求确认、审核或预览。版本不是最新、内容哈希失效或推送依赖不满足时记录失败/跳过原因，不发送错误版本。
 
 归档有独立的 `pending/sent/error` 状态。只有周报进入 `formal_sent` 后才允许归档；归档失败不会回退正式发送状态。再次调用正式发送只重试归档，不会重复推送消息。
 

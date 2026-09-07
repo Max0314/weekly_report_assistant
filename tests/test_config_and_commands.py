@@ -7,7 +7,7 @@ from app.services.workflow_config import normalize_config
 
 
 class WorkflowConfigTests(unittest.TestCase):
-    def test_formal_send_is_always_manual_and_targets_are_deduplicated(self) -> None:
+    def test_formal_send_is_automatic_without_review_gates_and_targets_are_deduplicated(self) -> None:
         config = normalize_config(
             {
                 "autoFormalSendEnabled": True,
@@ -18,7 +18,9 @@ class WorkflowConfigTests(unittest.TestCase):
                 ],
             }
         )
-        self.assertFalse(config["autoFormalSendEnabled"])
+        self.assertTrue(config["autoFormalSendEnabled"])
+        self.assertFalse(config["requireApproval"])
+        self.assertFalse(config["requirePreviewBeforeFormal"])
         self.assertEqual(1, len(config["previewGroupTargets"]))
 
     def test_project_baseline_is_cleaned_deduplicated_and_sorted(self) -> None:

@@ -283,16 +283,13 @@ class SchedulerService:
                 if not report:
                     results.append(self._skip("weekend_sun20_formal", period_key, "latest combined report is unavailable"))
                     continue
-                current, reason = self.reports.formal_version_is_current(int(report["id"]))
-                if (
-                    report.get("workflowState") != "approved"
-                    or report.get("confirmStatus") != "confirmed"
-                    or not current
-                ):
+                current, reason = self.reports.formal_version_is_current(
+                    int(report["id"]), require_approval=False
+                )
+                if not current:
                     results.append(
                         self._skip(
-                            "weekend_sun20_formal", period_key,
-                            reason or "current report has not been human-approved",
+                            "weekend_sun20_formal", period_key, reason,
                         )
                     )
                     continue

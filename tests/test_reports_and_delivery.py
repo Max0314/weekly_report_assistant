@@ -439,7 +439,7 @@ class ReportsAndDeliveryTests(unittest.TestCase):
         self.assertTrue(second["results"][0]["skipped"])
         self.assertEqual(1, len(robot.private_calls))
 
-    def test_formal_send_requires_approval_and_is_idempotent_after_success(self) -> None:
+    def test_formal_send_does_not_require_approval_and_is_idempotent_after_success(self) -> None:
         report = self.reports.generate(period_key="week:20260810", use_ai=False)
         self.config.update({
             "sendGroupImages": False,
@@ -451,8 +451,6 @@ class ReportsAndDeliveryTests(unittest.TestCase):
             database=self.db, reports=self.reports, renderer=FakeRenderer(),
             config_service=self.config, robot=robot, directory=FakeDirectory(),
         )
-        with self.assertRaises(DeliveryError):
-            delivery.formal(report["id"])
         delivery.preview(report["id"])
         preview_param = robot.group_calls[0]["msg_param"]
         self.assertEqual("sampleActionCard2", robot.group_calls[0]["msg_key"])
@@ -469,14 +467,31 @@ class ReportsAndDeliveryTests(unittest.TestCase):
         )
         self.assertNotIn("btns", preview_param)
         self.assertNotIn("singleTitle", preview_param)
-        with self.assertRaises(DeliveryError):
-            delivery.formal(report["id"])
-        self.reports.approve(report["id"], actor="approver")
         first = delivery.formal(report["id"])
         second = delivery.formal(report["id"])
         self.assertEqual(1, first["sent"])
         self.assertTrue(second["skipped"])
         self.assertEqual(2, len(robot.group_calls))
+
+    def test_formal_send_does_not_require_preview(self) -> None:
+        report = self.reports.generate(period_key="week:20260817", use_ai=False)
+        self.config.update({
+            "sendGroupImages": False,
+            "formalGroupTargets": [
+                {"name": "正式群", "openConversationId": "cid", "robotCode": "robot"}
+            ],
+        })
+        robot = FakeRobot()
+        delivery = DeliveryService(
+            database=self.db, reports=self.reports, renderer=FakeRenderer(),
+            config_service=self.config, robot=robot, directory=FakeDirectory(),
+        )
+
+        result = delivery.formal(report["id"])
+
+        self.assertEqual(1, result["sent"])
+        self.assertEqual("formal_sent", result["report"]["workflowState"])
+        self.assertEqual("", result["report"]["confirmStatus"])
 
     def test_release_test_push_uses_formal_style_without_changing_workflow(self) -> None:
         report = self.reports.generate(period_key="week:20260810", use_ai=False)
@@ -537,7 +552,7 @@ class ReportsAndDeliveryTests(unittest.TestCase):
         self.assertEqual("draft_generated", current["workflowState"])
         self.assertEqual("", current["confirmStatus"])
 
-    def test_formal_delivery_rejects_superseded_or_hash_stale_approval(self) -> None:
+    def test_formal_delivery_rejects_superseded_or_hash_stale_content(self) -> None:
         report = self.reports.generate(period_key="week:20260810", use_ai=False)
         self.config.update({
             "sendGroupImages": False,
@@ -549,27 +564,17 @@ class ReportsAndDeliveryTests(unittest.TestCase):
             database=self.db, reports=self.reports, renderer=FakeRenderer(),
             config_service=self.config, robot=robot, directory=FakeDirectory(),
         )
-        delivery.preview(report["id"])
-        approved = self.reports.approve(report["id"], actor="approver")
         revised = self.reports.update_sections(
-            approved["id"], {"executiveSummary": "审核后的内容被保存修改"}, actor="editor"
+            report["id"], {"executiveSummary": "保存后的最新内容"}, actor="editor"
         )
         with self.assertRaisesRegex(DeliveryError, "superseded"):
-            delivery.formal(approved["id"])
-        with self.assertRaisesRegex(DeliveryError, "approval"):
-            delivery.formal(revised["id"])
-
-        self.db.execute(
-            "UPDATE weekly_report SET workflow_state='awaiting_approval', previewed_at='2026-08-15T09:00:00+08:00' WHERE id=?",
-            (revised["id"],),
-        )
-        approved_revised = self.reports.approve(revised["id"], actor="approver")
+            delivery.formal(report["id"])
         self.db.execute(
             "UPDATE weekly_report SET sections_json='{" + '"executiveSummary":"out-of-band change"' + "}' WHERE id=?",
-            (approved_revised["id"],),
+            (revised["id"],),
         )
         with self.assertRaisesRegex(DeliveryError, "hash is stale"):
-            delivery.formal(approved_revised["id"])
+            delivery.formal(revised["id"])
 
     def test_personal_preview_formal_and_recall(self) -> None:
         report = self.reports.generate(period_key="week:20260810", use_ai=False)

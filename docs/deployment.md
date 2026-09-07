@@ -15,7 +15,7 @@
 4. 执行 `docker compose up -d --build`，等待 Chromium 依赖安装和健康检查通过。
 5. 从 `bi_center` 正式容器的受保护运行环境安全复制 `TEAMBITION_SOURCE=native`、`TEAMBITION_OPEN_API_BASE`、`TEAMBITION_OPEN_APP_ID`、`TEAMBITION_OPEN_APP_SECRET` 和 `TEAMBITION_OPEN_ORGANIZATION_ID`，不在终端输出值；保持 `TEAMBITION_SYNC_ENABLED=false`，先完成一次手动同步和看板核验。
 6. 钉钉开放平台新增 `Contact.User.Read`，配置并发布登录回调 `${PUBLIC_BASE_URL}/api/auth/dingtalk/callback`。首次访问管理页应自动进入钉钉授权；能匹配到 `bi_center` 有效在职人员目录的账号即可进入，登录不依赖周报确认人名单。
-7. 打开管理页，按“人员 → AI 表 → TB → 覆盖检查 → 生成 → 正文核对 → 图片 → 个人预览 → 审核 → 个人正式发送”的顺序联调；确认消息链路后再配置字段映射并启用存档回写。
+7. 打开管理页，按“人员 → AI 表 → TB → 覆盖检查 → 生成 → 正文核对 → 图片 → 测试群核对 → 周日自动正式发送”的顺序联调；确认消息链路后再配置字段映射并启用存档回写。
 
 ## Nginx 子路径
 
@@ -104,7 +104,7 @@ https://neoflow-cn.neo-net.com/weekly-assistant/api/auth/dingtalk/callback
 - `/api/teambition/status`、`/api/teambition/dashboard`、`/api/teambition/key-project-statuses` 和 `POST /api/sync/teambition` 均需要管理令牌；重点项目状态接口以 AI 多维表当前未删除记录为主表左关联 TB，不会因历史 TB 缓存扩大项目范围。状态接口只返回来源、配置布尔值、数量和最近批次，不返回 App ID、Secret、组织 ID 或访问令牌。
 - `/api/coverage` 显示预期产品/项目经理与本周有效事项覆盖；`POST /api/coverage/remind` 仅在管理员确认后发送一次性缺报单聊。
 - `sync_run` 保存逐表同步结果；`teambition_sync_run` 保存 TB 批次及重点项目匹配摘要。AI 表最新同步失败/过期/空快照，或已启用的 TB 最新批次失败/过期时，自动生成和自动预览会被阻断；关闭自动同步不会绕过该门禁，只能手动刷新快照或明确关闭“补充重点项目状态”。
-- `job_status` 保存调度失败及重试次数；机器人事件和推送日志只在管理接口可见。
+- `job_status` 保存调度失败及重试次数；周日 20:00 自动正式发送不要求确认、审核或预览，但仍校验最新综合版、内容哈希、人员目录、公开链接和正式目标；机器人事件和推送日志只在管理接口可见。
 - 外部接口失败时不删除上一版快照；正式推送失败进入 `retryable_error`。
 
 ## 数据库迁移

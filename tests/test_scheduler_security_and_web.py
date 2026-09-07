@@ -235,11 +235,8 @@ class SchedulerSecurityAndWebTests(unittest.TestCase):
                 self.report = {"id": 8, "imageReady": False, "workflowState": "draft_generated", "confirmStatus": ""}
                 return dict(self.report)
 
-            def formal_version_is_current(self, _report_id):
-                return (
-                    self.report["workflowState"] == "approved" and self.report["confirmStatus"] == "confirmed",
-                    "approval is not bound to the current report content",
-                )
+            def formal_version_is_current(self, _report_id, *, require_approval=True):
+                return (not require_approval, "approval is not bound to the current report content")
 
         class Renderer:
             def __init__(self, reports):
@@ -294,12 +291,13 @@ class SchedulerSecurityAndWebTests(unittest.TestCase):
 
         sunday = datetime(2026, 8, 16, 20, 1, tzinfo=SHANGHAI)
         scheduler.tick(sunday)
-        skipped = self.db.fetch_one(
+        scheduler.tick(sunday)
+        completed = self.db.fetch_one(
             "SELECT status,error_text FROM job_status WHERE job_key='weekend_sun20_formal' AND period_key='week:20260810'"
         )
-        self.assertEqual("skipped", skipped["status"])
-        self.assertIn("approval", skipped["error_text"])
-        self.assertEqual([], delivery.formal_calls)
+        self.assertEqual("success", completed["status"])
+        self.assertEqual("", completed["error_text"])
+        self.assertEqual([8], delivery.formal_calls)
 
     def test_send_claim_is_atomic_and_blocks_an_inflight_duplicate(self) -> None:
         delivery = DeliveryService(database=self.db)
@@ -466,7 +464,7 @@ class SchedulerSecurityAndWebTests(unittest.TestCase):
         self.assertIn('api("/api/model-config"', script)
         self.assertIn('api("/api/model-config/test"', script)
         self.assertIn("styles.css?v=20260901a", html)
-        self.assertIn("app.js?v=20260906a", html)
+        self.assertIn("app.js?v=20260907a", html)
         self.assertIn('data-route="personal-reports"', html)
         self.assertIn('data-page="personal-reports"', html)
         self.assertIn('id="personalCharts"', html)

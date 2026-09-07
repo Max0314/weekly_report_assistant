@@ -291,7 +291,9 @@ class ReportService:
             )
         return new_report_id
 
-    def formal_version_is_current(self, report_id: int) -> tuple[bool, str]:
+    def formal_version_is_current(
+        self, report_id: int, *, require_approval: bool = True
+    ) -> tuple[bool, str]:
         report = self.get(report_id)
         if report.get("reportKind") != "combined":
             return False, "only the current combined report can be formally delivered"
@@ -300,8 +302,8 @@ class ReportService:
             return False, "report is not the latest combined version"
         calculated = self._content_hash(report_id)
         if calculated != str(report.get("contentHash") or ""):
-            return False, "report content hash is stale; save a new revision and re-approve it"
-        if str(report.get("approvedContentHash") or "") != calculated:
+            return False, "report content hash is stale; save a new revision"
+        if require_approval and str(report.get("approvedContentHash") or "") != calculated:
             return False, "approval is not bound to the current report content"
         return True, ""
 

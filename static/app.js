@@ -233,8 +233,8 @@
     $("#directoryEndpoint").textContent = directoryDetail.baseUrl || "未配置";
     const scheduler = c.scheduler || {};
     $("#schedulerBanner").innerHTML = scheduler.processEnabled
-      ? `<span>调度已启用</span><strong>周六 09:00 测试群 · 周六 17:00 最终版单聊 · 周日 20:00 正式检查</strong><p>周日仅发送已人工审核、内容哈希未变化的当前综合版。</p>`
-      : `<span>安全策略</span><strong>服务器定时任务当前关闭</strong><p>配置可保存，但不会自动生成或推送；正式发送始终需要人工审核。</p>`;
+      ? `<span>调度已启用</span><strong>周六 09:00 测试群 · 周六 17:00 最终版单聊 · 周日 20:00 自动正式发送</strong><p>周日发送内容哈希有效的最新综合版，无需确认、审核或先行预览。</p>`
+      : `<span>自动推送</span><strong>服务器定时任务当前关闭</strong><p>配置可保存，但不会自动生成或推送。</p>`;
     renderOverview();
     return data;
   };
@@ -460,7 +460,7 @@
     personalIsDirty = false;
     personalOriginalEdit = JSON.stringify(currentPersonalEditPayload());
     $("#savePersonalEdit").disabled = true;
-    $("#personalDirtyHint").textContent = "保存后需要重新预览和审核团队周报。";
+    $("#personalDirtyHint").textContent = "保存后生成新的最新综合版，周日 20:00 将自动发送该版。";
     $("#personalDirtyHint").className = "";
     $("#personalEditDialog").showModal();
     return data;
@@ -621,7 +621,7 @@
     $("#reportEditTitle").value = report.title || "";
     SECTION_KEYS.forEach((key) => setValue(`#section-${key}`, report.sections?.[key] || ""));
     $("#saveSections").disabled = true;
-    $("#reportDirtyHint").textContent = "修改后保存会清除旧图片、预览和审核状态。";
+    $("#reportDirtyHint").textContent = "保存后生成新的最新综合版，周日 20:00 将自动发送该版。";
     $("#reportDirtyHint").className = "";
     const categorySections = report.sections?.categorySections || [];
     $("#reportCategorySections").innerHTML = categorySections.length ? categorySections.map((section) => `<label data-report-category-key="${escapeHtml(section.key || "")}"><span><strong>${escapeHtml(section.label || "未分类")}</strong><small>${section.itemCount || 0} 项 · 风险 ${section.riskCount || 0} · 逾期 ${section.overdueCount || 0}</small></span><textarea maxlength="12000">${escapeHtml(section.digest || section.content || "")}</textarea></label>`).join("") : '<p class="muted">本版没有结构化分类，事实清单仍可正常查看。</p>';
@@ -790,7 +790,7 @@
       requireApproval: $("#requireApproval").checked,
       requirePreviewBeforeFormal: $("#requirePreviewBeforeFormal").checked,
       sendGroupImages: $("#sendGroupImages").checked,
-      autoFormalSendEnabled: false,
+      autoFormalSendEnabled: true,
     };
     try { workflowConfig.archiveFieldMap = JSON.parse($("#archiveFieldMap").value || "{}"); }
     catch (error) { if (strictJson) throw new Error(`存档字段映射不是有效 JSON：${error.message}`); }

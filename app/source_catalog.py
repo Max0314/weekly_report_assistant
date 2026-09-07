@@ -175,14 +175,14 @@ DEFAULT_WORKFLOW_CONFIG: dict[str, Any] = {
     "teambitionDepartmentNames": DEFAULT_TEAMBITION_DEPARTMENTS,
     "autoGenerateEnabled": True,
     "autoPreviewEnabled": False,
-    "autoFormalSendEnabled": False,
-    "requireApproval": True,
-    "requirePreviewBeforeFormal": True,
+    "autoFormalSendEnabled": True,
+    "requireApproval": False,
+    "requirePreviewBeforeFormal": False,
     # The production cadence is fixed in SchedulerService: Saturday 09:00
     # generates and sends only to the preview test group; Saturday 17:00
-    # sends the final version privately; Sunday 20:00 checks the approved
-    # current version for formal delivery.  These legacy display fields are
-    # retained for backward-compatible configuration reads only.
+    # sends the final version privately; Sunday 20:00 automatically sends the
+    # latest current combined version. These legacy display fields are retained
+    # for backward-compatible configuration reads only.
     "generateWeekday": 5,
     "generateHour": 9,
     "generateMinute": 0,

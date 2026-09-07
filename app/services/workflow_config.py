@@ -125,11 +125,11 @@ def normalize_config(raw: dict[str, Any] | None) -> dict[str, Any]:
         "archiveWriteEnabled",
     ):
         config[key] = bool(config.get(key))
-    # Formal delivery is deliberately confirmation-driven in v1. These are
-    # safety invariants, rather than admin-togglable conveniences.
-    config["autoFormalSendEnabled"] = False
-    config["requireApproval"] = True
-    config["requirePreviewBeforeFormal"] = True
+    # The production cadence is fixed: the latest combined report is sent on
+    # Sunday at 20:00 without preview, confirmation, or approval gates.
+    config["autoFormalSendEnabled"] = True
+    config["requireApproval"] = False
+    config["requirePreviewBeforeFormal"] = False
     config["sourceSyncIntervalMinutes"] = _int(config.get("sourceSyncIntervalMinutes"), 60, 5, 1440)
     config["sourceFreshnessHours"] = _int(config.get("sourceFreshnessHours"), 26, 1, 168)
     config["teambitionSyncIntervalMinutes"] = _int(

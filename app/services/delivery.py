@@ -304,12 +304,15 @@ class DeliveryService:
                 raise DeliveryError("recalled or cancelled report cannot be sent again; generate a new version")
             if report["workflowState"] == "superseded":
                 raise DeliveryError("superseded report cannot be formally delivered")
-            current, reason = self.reports.formal_version_is_current(report_id)
+            approval_required = bool(config.get("requireApproval"))
+            current, reason = self.reports.formal_version_is_current(
+                report_id, require_approval=approval_required
+            )
             if not current:
                 raise DeliveryError(reason)
             if config.get("requirePreviewBeforeFormal") and not report.get("previewedAt"):
                 raise DeliveryError("report must be previewed before formal delivery")
-            if report.get("confirmStatus") != "confirmed":
+            if approval_required and report.get("confirmStatus") != "confirmed":
                 raise DeliveryError("report must be approved before formal delivery")
             if config.get("enforceDirectoryForFormalSend") and self.directory.cache_status()["count"] <= 0:
                 raise DeliveryError("bi_center employee directory cache is empty; formal delivery is blocked")
@@ -340,7 +343,7 @@ class DeliveryService:
             # auditable instead of claiming that people were mentioned.
             markdown = (
                 f"{markdown}\n\n---\n\n**核查提醒**：请相关负责人核对本版内容；"
-                "如需修改，请在周六 17:00 前保存新版并重新走预览与审核。"
+                "如需修改，请在周日 20:00 前保存；系统届时自动发送最新综合版。"
             )
         results: list[dict[str, Any]] = []
         sent = 0
