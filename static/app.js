@@ -20,7 +20,7 @@
     "personal-reports": {eyebrow: "PERSONAL WEEKLY", title: "个人周报", subtitle: "我的总结与授权成员明细"},
     "report-config": {eyebrow: "REPORT SETTINGS", title: "周报配置", subtitle: "周期口径、项目背景与存档规则"},
     "model-config": {eyebrow: "MODEL GATEWAY", title: "模型配置", subtitle: "沿用 bi_center 的统一模型配置"},
-    delivery: {eyebrow: "DELIVERY CONTROL", title: "推送设置", subtitle: "测试目标、正式目标与人工确认"},
+    delivery: {eyebrow: "DELIVERY CONTROL", title: "推送设置", subtitle: "测试核对与周日自动正式发送"},
   };
   const STATUS_LABELS = {
     draft_generated: "待编辑", rendered: "已生成图片", awaiting_approval: "待确认", approved: "已确认",
@@ -439,7 +439,7 @@
   const updatePersonalDirtyState = () => {
     personalIsDirty = JSON.stringify(currentPersonalEditPayload()) !== personalOriginalEdit;
     $("#savePersonalEdit").disabled = !personalIsDirty;
-    $("#personalDirtyHint").textContent = personalIsDirty ? "有未保存修改；保存后需要重新预览和审核团队周报。" : "保存后需要重新预览和审核团队周报。";
+    $("#personalDirtyHint").textContent = personalIsDirty ? "有未保存修改；保存后会生成新的最新综合版。" : "保存后生成新的最新综合版，周日 20:00 将自动发送该版。";
     $("#personalDirtyHint").className = personalIsDirty ? "dirty" : "";
   };
 
@@ -655,7 +655,7 @@
   const updateReportDirtyState = () => {
     reportIsDirty = JSON.stringify(currentReportEditPayload()) !== reportOriginalEdit;
     $("#saveSections").disabled = !reportIsDirty;
-    $("#reportDirtyHint").textContent = reportIsDirty ? "有未保存修改；保存后需重新生成图片并再次预览。" : "修改后保存会清除旧图片和审核状态。";
+    $("#reportDirtyHint").textContent = reportIsDirty ? "有未保存修改；保存后会生成新的最新综合版。" : "保存后生成新的最新综合版，周日 20:00 将自动发送该版。";
     $("#reportDirtyHint").className = reportIsDirty ? "dirty" : "";
   };
 
