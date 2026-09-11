@@ -45,6 +45,11 @@
   let personalOriginalEdit = "";
   let personalIsDirty = false;
   let activeReportId = null;
+  let activeReportLeaseToken = "";
+  let reportLeaseExpiresAt = 0;
+  let reportLeaseWarningTimer = null;
+  let reportLeaseExpiryTimer = null;
+  let reportLeaseTouchAt = 0;
   let reportOriginalEdit = "";
   let reportIsDirty = false;
   let reportFilter = "current";
@@ -611,9 +616,107 @@
     return data;
   };
 
+  const clearReportLeaseTimers = () => {
+    if (reportLeaseWarningTimer) window.clearTimeout(reportLeaseWarningTimer);
+    if (reportLeaseExpiryTimer) window.clearTimeout(reportLeaseExpiryTimer);
+    reportLeaseWarningTimer = null;
+    reportLeaseExpiryTimer = null;
+  };
+
+  const setReportEditorEnabled = (enabled) => {
+    ["#reportEditTitle", ...SECTION_KEYS.map((key) => `#section-${key}`)].forEach((selector) => {
+      const input = $(selector);
+      if (input) input.disabled = !enabled;
+    });
+    $$('textarea, input', $("#reportCategorySections")).forEach((input) => { input.disabled = !enabled; });
+    $$('textarea, input', $("#reportSources")).forEach((input) => { input.disabled = !enabled; });
+    $("#saveSections").disabled = !enabled || !reportIsDirty;
+  };
+
+  const expireReportEditor = (message = "30 分钟无操作，编辑权已自动释放。未保存内容仍保留在当前页面供复制。") => {
+    clearReportLeaseTimers();
+    activeReportLeaseToken = "";
+    reportLeaseExpiresAt = 0;
+    setReportEditorEnabled(false);
+    $("#reportDirtyHint").textContent = message;
+    $("#reportDirtyHint").className = "dirty";
+    window.alert(message);
+  };
+
+  const scheduleReportLeaseTimers = (expiresAt) => {
+    clearReportLeaseTimers();
+    reportLeaseExpiresAt = new Date(expiresAt).getTime();
+    if (!Number.isFinite(reportLeaseExpiresAt)) return;
+    const remaining = Math.max(0, reportLeaseExpiresAt - Date.now());
+    reportLeaseWarningTimer = window.setTimeout(async () => {
+      if (!activeReportLeaseToken || !$("#reportDialog").open) return;
+      if (window.confirm("团队周报已连续 25 分钟没有操作，编辑权将在 5 分钟后释放。是否继续编辑？")) {
+        await touchReportLease(true);
+      }
+    }, Math.max(0, remaining - 5 * 60 * 1000));
+    reportLeaseExpiryTimer = window.setTimeout(() => {
+      if (activeReportLeaseToken && $("#reportDialog").open) expireReportEditor();
+    }, remaining + 500);
+  };
+
+  const touchReportLease = async (force = false) => {
+    if (!activeReportId || !activeReportLeaseToken) return;
+    const current = Date.now();
+    if (!force && current - reportLeaseTouchAt < 30000) return;
+    reportLeaseTouchAt = current;
+    try {
+      const lease = await api(`/api/reports/${activeReportId}/edit-lease/activity`, {
+        method: "POST",
+        body: JSON.stringify({leaseToken: activeReportLeaseToken}),
+      });
+      scheduleReportLeaseTimers(lease.expiresAt);
+    } catch (error) {
+      expireReportEditor(error.message || "编辑权已释放，请重新打开周报后继续编辑。");
+    }
+  };
+
+  const releaseReportLease = ({keepalive = false} = {}) => {
+    if (!activeReportId || !activeReportLeaseToken) return Promise.resolve();
+    const reportId = activeReportId;
+    const leaseToken = activeReportLeaseToken;
+    activeReportLeaseToken = "";
+    reportLeaseExpiresAt = 0;
+    clearReportLeaseTimers();
+    const headers = {"Content-Type": "application/json"};
+    if (tokenInput.value.trim()) headers.Authorization = `Bearer ${tokenInput.value.trim()}`;
+    return fetch(resolveUrl(`/api/reports/${reportId}/edit-lease`), {
+      method: "DELETE",
+      headers,
+      credentials: "same-origin",
+      keepalive,
+      body: JSON.stringify({leaseToken}),
+    }).catch(() => undefined);
+  };
+
   const openReport = async (id) => {
-    const report = await api(`/api/reports/${id}`);
+    let lease;
+    try {
+      lease = await api(`/api/reports/${id}/edit-lease`, {
+        method: "POST",
+        body: JSON.stringify({leaseToken: activeReportId === Number(id) ? activeReportLeaseToken : ""}),
+      });
+    } catch (error) {
+      if ([409, 423].includes(error.status)) {
+        window.alert(error.message);
+        error.silent = true;
+      }
+      throw error;
+    }
     activeReportId = Number(id);
+    activeReportLeaseToken = lease.leaseToken;
+    reportLeaseTouchAt = Date.now();
+    let report;
+    try {
+      report = await api(`/api/reports/${id}`);
+    } catch (error) {
+      await releaseReportLease();
+      throw error;
+    }
     reportIsDirty = false;
     $("#reportSourceDetails").open = false;
     $("#reportDialogTitle").textContent = `#${id} ${report.title}`;
@@ -633,6 +736,8 @@
       return `<details class="personal-item-editor" data-report-source-key="${escapeHtml(itemKey)}" ${index < 2 ? "open" : ""}><summary><span><strong>${escapeHtml(item.title || "未命名事项")}</strong><small>${escapeHtml(item.category || "未分类")} · ${escapeHtml(item.status || "未标记")}</small></span><em>展开编辑</em></summary><div class="personal-item-editor-grid"><label>分类键<input data-report-source-field="categoryKey" maxlength="12000" value="${escapeHtml(item.categoryKey || "")}"></label><label>分类顺序<input data-report-source-field="categoryOrder" type="number" min="1" max="9999" value="${escapeHtml(item.categoryOrder || 999)}"></label><label>分类<input data-report-source-field="category" maxlength="12000" value="${escapeHtml(item.category || "")}"></label><label>子分类<input data-report-source-field="subcategory" maxlength="12000" value="${escapeHtml(item.subcategory || "")}"></label><label class="full-span">事项标题<input data-report-source-field="title" maxlength="12000" value="${escapeHtml(item.title || "")}"></label><label>状态<input data-report-source-field="status" maxlength="12000" value="${escapeHtml(item.status || "")}"></label><label>优先级<input data-report-source-field="priority" maxlength="12000" value="${escapeHtml(item.priority || "")}"></label><label>事项日期<input data-report-source-field="eventAt" maxlength="12000" value="${escapeHtml(item.eventAt || "")}"></label><label>计划完成日期<input data-report-source-field="dueAt" maxlength="12000" value="${escapeHtml(item.dueAt || "")}"></label><label class="full-span">负责人（每行：姓名|userId|角色）<textarea data-report-source-field="assignees" maxlength="12000">${escapeHtml(assignees)}</textarea></label><label class="full-span">本周进展<textarea data-report-source-field="progressText" maxlength="12000">${escapeHtml(item.progressText || "")}</textarea></label><label class="full-span">下周计划<textarea data-report-source-field="planText" maxlength="12000">${escapeHtml(item.planText || "")}</textarea></label><label class="full-span">风险与问题<textarea data-report-source-field="riskText" maxlength="12000">${escapeHtml(item.riskText || "")}</textarea></label>${tbReadonly}</div></details>`;
     }).join("") : '<p class="muted">本版周报未纳入事项。</p>';
     reportOriginalEdit = JSON.stringify(currentReportEditPayload());
+    setReportEditorEnabled(true);
+    scheduleReportLeaseTimers(lease.expiresAt);
     $("#reportDialog").showModal();
     return report;
   };
@@ -652,6 +757,35 @@
       })),
     },
   });
+  const currentReportEditChanges = () => {
+    const original = JSON.parse(reportOriginalEdit || "{}");
+    const current = currentReportEditPayload();
+    const sections = {};
+    SECTION_KEYS.forEach((key) => {
+      if (current.sections[key] !== original.sections?.[key]) sections[key] = current.sections[key];
+    });
+    const originalCategories = Object.fromEntries(
+      (original.sections?.categorySections || []).map((item) => [item.key, item.digest])
+    );
+    const categorySections = (current.sections.categorySections || []).filter(
+      (item) => item.digest !== originalCategories[item.key]
+    );
+    if (categorySections.length) sections.categorySections = categorySections;
+    const sourceOverrides = {};
+    Object.entries(current.sections.sourceOverrides || {}).forEach(([itemKey, values]) => {
+      const originalValues = original.sections?.sourceOverrides?.[itemKey] || {};
+      const changes = Object.fromEntries(
+        Object.entries(values).filter(([key, value]) => value !== originalValues[key])
+      );
+      if (Object.keys(changes).length) sourceOverrides[itemKey] = changes;
+    });
+    if (Object.keys(sourceOverrides).length) sections.sourceOverrides = sourceOverrides;
+    return {
+      title: current.title === original.title ? null : current.title,
+      sections,
+      editLeaseToken: activeReportLeaseToken,
+    };
+  };
   const updateReportDirtyState = () => {
     reportIsDirty = JSON.stringify(currentReportEditPayload()) !== reportOriginalEdit;
     $("#saveSections").disabled = !reportIsDirty;
@@ -661,6 +795,7 @@
 
   const closeReportEditor = () => {
     if (reportIsDirty && !window.confirm("当前修改尚未保存，确定放弃吗？")) return false;
+    void releaseReportLease();
     reportIsDirty = false;
     $("#reportDialog").close();
     if (routeFromHash() === "reports" && editReportIdFromHash()) window.history.replaceState(null, "", "#/reports");
@@ -908,12 +1043,12 @@
     try {
       const data = await callback();
       log(`${label}成功`, compactResult(data));
-      showToast(`${label}成功`);
+      showToast(data?.queued ? `${label}已排队` : `${label}成功`);
       if (refresh) await Promise.all([loadReadiness(), loadReports()]);
       return data;
     } catch (error) {
       log(`${label}失败`, error.message);
-      showToast(`${label}失败：${error.message}`, "error");
+      if (!error.silent) showToast(`${label}失败：${error.message}`, "error");
       return null;
     } finally {
       busy.textContent = "";
@@ -1091,22 +1226,40 @@
   $("#reportEditTitle").addEventListener("input", updateReportDirtyState);
   $("#reportCategorySections").addEventListener("input", updateReportDirtyState);
   $("#reportSources").addEventListener("input", updateReportDirtyState);
+  $("#reportDialog").addEventListener("input", () => { void touchReportLease(); });
+  $("#reportDialog").addEventListener("click", (event) => {
+    if (event.target.closest("#closeReportDialog, #cancelSections, #saveSections")) return;
+    if (event.target.closest("input, textarea, summary, button")) void touchReportLease();
+  });
   $("#closeReportDialog").addEventListener("click", closeReportEditor);
   $("#cancelSections").addEventListener("click", closeReportEditor);
   $("#reportDialog").addEventListener("cancel", (event) => {
-    if (!reportIsDirty) return;
     event.preventDefault();
     closeReportEditor();
   });
   $("#saveSections").addEventListener("click", () => run("保存周报正文", async () => {
     if (!activeReportId) throw new Error("未选择周报");
-    const payload = currentReportEditPayload();
-    const data = await api(`/api/reports/${activeReportId}/sections`, {method: "PUT", body: JSON.stringify(payload)});
+    if (!activeReportLeaseToken) throw new Error("编辑权已释放，请重新打开周报后再保存");
+    const payload = currentReportEditChanges();
+    let data;
+    try {
+      data = await api(`/api/reports/${activeReportId}/sections`, {method: "PUT", body: JSON.stringify(payload)});
+    } catch (error) {
+      if ([409, 423].includes(error.status)) {
+        expireReportEditor(error.message);
+        error.silent = true;
+      }
+      throw error;
+    }
+    activeReportLeaseToken = "";
+    reportLeaseExpiresAt = 0;
+    clearReportLeaseTimers();
     reportIsDirty = false;
     $("#reportDialog").close();
     if (routeFromHash() === "reports" && editReportIdFromHash()) window.history.replaceState(null, "", "#/reports");
     return data;
   }));
+  window.addEventListener("beforeunload", () => { void releaseReportLease({keepalive: true}); });
   $("#personalEditDialog").addEventListener("input", updatePersonalDirtyState);
   $("#closePersonalEdit").addEventListener("click", closePersonalEditor);
   $("#cancelPersonalEdit").addEventListener("click", closePersonalEditor);

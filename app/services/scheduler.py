@@ -13,6 +13,7 @@ from .delivery import DeliveryService, delivery_service
 from .directory import DirectoryService, directory_service
 from .rendering import ReportRenderer, report_renderer
 from .reports import ReportService, report_service
+from .team_editing import ReportGenerationDeferred, TeamEditingService
 from .teambition import TeambitionService, teambition_service
 from .workflow_config import WorkflowConfigService, workflow_config_service
 
@@ -34,6 +35,7 @@ class SchedulerService:
         self.collector = collector or source_collector
         self.directory = directory or directory_service
         self.reports = reports or report_service
+        self.team_editing = getattr(self.reports, "team_editing", TeamEditingService(self.db))
         self.renderer = renderer or report_renderer
         self.delivery = delivery or delivery_service
         self.teambition = teambition or teambition_service
@@ -54,6 +56,8 @@ class SchedulerService:
         timestamp = to_db(now_local())
         try:
             result = callback()
+        except ReportGenerationDeferred as exc:
+            return self._waiting(job_key, period_key, str(exc))
         except Exception as exc:
             previous = self.db.fetch_one(
                 "SELECT retry_count FROM job_status WHERE job_key=? AND period_key=?", (job_key, period_key)
@@ -82,6 +86,72 @@ class SchedulerService:
             (job_key, period_key, timestamp, timestamp),
         )
         return {"job": job_key, "status": "success", "result": result}
+
+    def _waiting(self, job_key: str, period_key: str, reason: str) -> dict[str, Any]:
+        timestamp = to_db(now_local())
+        next_retry = to_db((now_local() + timedelta(minutes=1)).replace(microsecond=0))
+        self.db.execute(
+            """
+            INSERT INTO job_status(job_key,period_key,status,retry_count,next_retry_at,error_text,ran_at,updated_at)
+            VALUES (?,?,'waiting',0,?,?,?,?)
+            ON CONFLICT(job_key,period_key) DO UPDATE SET status='waiting',retry_count=0,
+                next_retry_at=excluded.next_retry_at,error_text=excluded.error_text,
+                ran_at=excluded.ran_at,updated_at=excluded.updated_at
+            """,
+            (job_key, period_key, next_retry, str(reason or "waiting")[:2000], timestamp, timestamp),
+        )
+        return {"job": job_key, "status": "waiting", "reason": str(reason or "waiting")}
+
+    def _process_pending_generations(self, now: datetime) -> list[dict[str, Any]]:
+        results: list[dict[str, Any]] = []
+        for request in self.team_editing.pending_generations(now=now):
+            period_key = str(request.get("period_key") or "")
+            report_kind = str(request.get("report_kind") or "combined")
+            try:
+                report = self.reports.generate(
+                    period_key=period_key,
+                    report_kind=report_kind,
+                    actor=str(request.get("requested_by") or "scheduler"),
+                    use_ai=bool(request.get("use_ai")),
+                )
+                results.append(
+                    {
+                        "job": "queued_report_generation",
+                        "status": "success",
+                        "periodKey": period_key,
+                        "reportKind": report_kind,
+                        "reportId": int(report["id"]),
+                    }
+                )
+            except ReportGenerationDeferred as exc:
+                results.append(
+                    {
+                        "job": "queued_report_generation",
+                        "status": "waiting",
+                        "periodKey": period_key,
+                        "reportKind": report_kind,
+                        "reason": str(exc),
+                    }
+                )
+            except Exception as exc:
+                results.append(
+                    {
+                        "job": "queued_report_generation",
+                        "status": "error",
+                        "periodKey": period_key,
+                        "reportKind": report_kind,
+                        "error": str(exc),
+                    }
+                )
+        return results
+
+    def process_pending_generations(self) -> list[dict[str, Any]]:
+        if not self._lock.acquire(blocking=False):
+            return []
+        try:
+            return self._process_pending_generations(now_local())
+        finally:
+            self._lock.release()
 
     def _skip(self, job_key: str, period_key: str, reason: str) -> dict[str, Any]:
         """Persist a non-retryable safety decision for weekend delivery."""
@@ -180,7 +250,7 @@ class SchedulerService:
             config = self.config_service.get()
             if not config.get("enabled"):
                 return []
-            results: list[dict[str, Any]] = []
+            results = self._process_pending_generations(now)
             interval = int(config["sourceSyncIntervalMinutes"])
             minute_index = (now.hour * 60 + now.minute) // interval * interval
             source_bucket = f"{now.date().isoformat()}:{minute_index:04d}"

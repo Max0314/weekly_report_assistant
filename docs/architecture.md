@@ -63,13 +63,15 @@ TB 项目严格以多维表重点项目为白名单：项目编号精确匹配�
 
 旁路状态为 `need_changes`、`cancelled`、`superseded` 和 `retryable_error`。保存团队或个人内容时，服务复制当前综合版到新版本、复制个人覆盖、使旧版 `superseded` 并清除其旧预览与审核；个人保存允许从同周期 `superseded` 版本安全迁移到最新可编辑版本，版本确认、复制和失效操作在同一个 SQLite `BEGIN IMMEDIATE` 事务中完成，从而保留已经保存的其他成员覆盖。新版本的 `content_hash` 覆盖团队内容、快照、指标和个人覆盖，人工审核仍可写入 `approved_content_hash`。正式发送必须满足“当前综合版且内容哈希有效”，不要求审核哈希。消息幂等键由“周报 ID + 阶段 + 目标类型 + 目标 + 消息类型”组成；发送前先在 SQLite 事务中占位，10 分钟内的并发重复调用会被阻断。
 
+团队编辑以“周期 + 周报类型”为锁粒度，`weekly_report_edit_lease` 保存当前编辑者、令牌哈希、最后活动时间和失效时间。只有持有者可保存，连续 30 分钟没有输入或明确交互时租约失效；页面心跳不能在纯空闲状态下无限续租。个人周报读写不检查该租约。所有团队生成入口在租约存续期间统一写入 `weekly_report_generation_queue`，多个请求合并为一次；编辑保存的字段级差异也持久化在队列中，待重新生成最新来源快照后重放，人工值优先，并复制最新个人覆盖。生成任务运行期间反向阻止新团队编辑进入，避免生成与编辑交错。
+
 周末任务以 Asia/Shanghai 计算并使用各自 `job_status` 键：`weekend_sat09_test`、`weekend_sat17_final`、`weekend_sun20_formal`。任务重启后在 36 小时补偿窗口内重试失败的同一周期；周日任务读取执行时的最新综合版，不要求确认、审核或预览。版本不是最新、内容哈希失效或推送依赖不满足时记录失败/跳过原因，不发送错误版本。
 
 归档有独立的 `pending/sent/error` 状态。只有周报进入 `formal_sent` 后才允许归档；归档失败不会回退正式发送状态。再次调用正式发送只重试归档，不会重复推送消息。
 
 ## 存储与恢复
 
-SQLite 使用 WAL；`runtime/` 挂载持久卷。备份数据库文件和 `runtime/reports/` 即可恢复。启动时幂等增加周报事实快照、覆盖清单及归档状态字段，并为来源事实增加分类键、分类顺序、二级分类和负责人角色 JSON；已有周报保留原数据并在缺少快照时兼容读取当前源记录，新周报写入不可变事实快照。个人周报为快照派生视图，不新增业务数据表。模型覆盖和测试状态复用现有 `app_config` 表的 `ai_model`、`ai_model_test` 配置键，不新增表。
+SQLite 使用 WAL；`runtime/` 挂载持久卷。备份数据库文件和 `runtime/reports/` 即可恢复。启动时幂等增加周报事实快照、覆盖清单及归档状态字段，并为来源事实增加分类键、分类顺序、二级分类和负责人角色 JSON；已有周报保留原数据并在缺少快照时兼容读取当前源记录，新周报写入不可变事实快照。个人周报为快照派生视图，不新增业务数据表。团队编辑新增 `weekly_report_edit_lease` 和 `weekly_report_generation_queue` 两张协调表，不修改历史周报内容。模型覆盖和测试状态复用现有 `app_config` 表的 `ai_model`、`ai_model_test` 配置键。
 
 TB 接入新增四张 SQLite 表，不改动既有表结构。回滚旧镜像不会删除这些表，既有 AI 表事实、周报和推送日志不受影响；如需彻底移除，必须停服备份后再删除 `teambition_task`、`teambition_project`、`teambition_user_map`、`teambition_sync_run`，并清理 `source_record` 中 `table_id=teambition_tasks` 的投影数据。
 

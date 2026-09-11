@@ -125,6 +125,7 @@ https://neoflow-cn.neo-net.com/weekly-assistant/api/auth/dingtalk/callback
 - `employee_cache` 增加工号、主部门 ID、任职来源、负责人标志与负责人范围字段
 - 新建 `organization_cache` 和 `employee_org_relation_cache` 两张可重建缓存表
 - 新建 `teambition_task`、`teambition_project`、`teambition_user_map` 和 `teambition_sync_run` 四张 TB 缓存/审计表；`teambition_project` 增加重点项目匹配、进度和项目状态字段。历史 `source_record.table_id=teambition_tasks` 投影会在下一次 TB 同步时停用，不再进入新周报
+- 新建 `weekly_report_edit_lease` 和 `weekly_report_generation_queue`，分别保存团队周报 30 分钟空闲租约及编辑期间合并后的待生成请求；不修改已有周报、个人填写和发送记录
 
 影响：已有周报内容、状态、事实快照和发送日志不变；历史版本的两个 hash 字段初始为空，因此不能被新代码正式发送，需重新保存/预览/审核生成新版。`teambition_project` 新字段以空值、`0` 或 `-1` 初始化，部署后的下一次正式 AI 表/TB 同步仅为当前多维表重点项目补齐真实状态，不会回写或伪造历史周报。个人周报继续由生成时快照实时派生。回滚旧镜像时新增列会被忽略，既有项目、任务、人员和发送数据不丢失。
 
@@ -136,5 +137,6 @@ https://neoflow-cn.neo-net.com/weekly-assistant/api/auth/dingtalk/callback
 4. 如需彻底回滚目录缓存结构，停服并备份 SQLite 后，可在数据库副本中删除 `employee_org_relation_cache`、`organization_cache`；员工新增列可保留为空。
 5. 如需彻底回滚 TB 接入，先设置 `TEAMBITION_SYNC_ENABLED=false`，再在数据库副本中删除四张 `teambition_*` 表和 `source_record.table_id=teambition_tasks` 投影；历史周报的事实快照保持不变。
 6. 回滚本次分类/个人视图无需删除数据：旧镜像会忽略 `source_record` 新增列；如需物理删除新增列，应在数据库副本上重建表并验证后替换，不在生产库上直接执行破坏性变更。
+7. 回滚团队编辑锁无需迁移历史数据：旧镜像会忽略两张协调表；如需彻底移除，停服并备份 SQLite 后删除 `weekly_report_edit_lease`、`weekly_report_generation_queue` 即可。
 
 撤回钉钉消息依赖发送时取得的 `processQueryKey`，超出钉钉允许窗口时可能无法撤回。部分撤回失败时周报进入 `retryable_error`，不会错误标记为全部撤回。

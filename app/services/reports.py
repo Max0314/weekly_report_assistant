@@ -10,6 +10,7 @@ from ..db import Database, db
 from ..source_catalog import SOURCE_TABLES, SOURCE_TABLE_BY_ID, TEAMBITION_TABLE_ID
 from ..time_utils import SHANGHAI, from_db, now_local, to_db, weekly_window
 from .ai_summary import AISummaryClient, AISummaryError, ai_summary_client
+from .team_editing import TeamEditingService
 from .workflow_config import WorkflowConfigService, workflow_config_service
 
 
@@ -123,6 +124,7 @@ class ReportService:
         self.db = database or db
         self.config_service = config_service or workflow_config_service
         self.ai_client = ai_client or ai_summary_client
+        self.team_editing = TeamEditingService(self.db)
 
     def _content_hash(self, report_id: int) -> str:
         """Hash every report value that can change a delivered team/personal view.
@@ -945,6 +947,84 @@ class ReportService:
         actor: str = "admin",
         use_ai: bool = True,
     ) -> dict[str, Any]:
+        window = self._window(period_key)
+        normalized_period = str(window["periodKey"])
+        manual_patch = self.team_editing.begin_generation(
+            period_key=normalized_period,
+            report_kind=report_kind,
+            actor=actor,
+            use_ai=use_ai,
+        )
+        try:
+            report = self._generate_unlocked(
+                period_key=normalized_period,
+                report_kind=report_kind,
+                actor=actor,
+                use_ai=use_ai,
+            )
+            prior_row = self.db.fetch_one(
+                """
+                SELECT id FROM weekly_report
+                WHERE period_key=? AND report_kind=? AND version<?
+                ORDER BY version DESC LIMIT 1
+                """,
+                (normalized_period, report_kind, int(report["version"])),
+            )
+            if prior_row:
+                self._copy_personal_edits(int(prior_row["id"]), int(report["id"]))
+                report = self.get(int(report["id"]), include_sources=True)
+            patch_sections = manual_patch.get("sections")
+            if isinstance(patch_sections, dict) and (
+                patch_sections or manual_patch.get("title") is not None
+            ):
+                report = self.update_sections(
+                    int(report["id"]),
+                    patch_sections,
+                    actor=str(manual_patch.get("actor") or actor),
+                    title=manual_patch.get("title"),
+                )
+            self.team_editing.complete_generation(
+                period_key=normalized_period,
+                report_kind=report_kind,
+                report_id=int(report["id"]),
+            )
+            return report
+        except Exception as exc:
+            self.team_editing.fail_generation(
+                period_key=normalized_period,
+                report_kind=report_kind,
+                error=exc,
+            )
+            raise
+
+    def _copy_personal_edits(self, source_report_id: int, target_report_id: int) -> None:
+        if int(source_report_id) == int(target_report_id):
+            return
+        with self.db.transaction() as connection:
+            connection.execute(
+                "DELETE FROM weekly_report_personal_edit WHERE report_id=?",
+                (int(target_report_id),),
+            )
+            connection.execute(
+                """
+                INSERT INTO weekly_report_personal_edit(
+                    report_id,user_id,summary,category_digests_json,item_overrides_json,updated_by,updated_at
+                )
+                SELECT ?,user_id,summary,category_digests_json,item_overrides_json,updated_by,updated_at
+                FROM weekly_report_personal_edit WHERE report_id=?
+                """,
+                (int(target_report_id), int(source_report_id)),
+            )
+        self._refresh_content_hash(target_report_id)
+
+    def _generate_unlocked(
+        self,
+        *,
+        period_key: str = "",
+        report_kind: str = "combined",
+        actor: str = "admin",
+        use_ai: bool = True,
+    ) -> dict[str, Any]:
         window, items = self.source_items(period_key=period_key, report_kind=report_kind)
         metrics = self._metrics(items)
         coverage = self._manager_coverage(window=window, items=items, report_kind=report_kind)
@@ -1420,9 +1500,13 @@ class ReportService:
         title: str | None = None,
     ) -> dict[str, Any]:
         report = self.get(report_id)
-        if report["workflowState"] in NON_EDITABLE_STATES:
-            raise ValueError("final or superseded report cannot be edited")
-        report_id = self._begin_revision(report_id, actor=actor)
+        if report["workflowState"] in FINAL_STATES:
+            raise ValueError("a final report cannot be edited")
+        report_id = self._begin_revision(
+            report_id,
+            actor=actor,
+            rebase_superseded=True,
+        )
         report = self.get(report_id, include_sources=True)
         merged = {**report["sections"]}
         for key in EDITABLE_SECTION_KEYS:

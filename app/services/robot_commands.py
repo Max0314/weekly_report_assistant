@@ -16,6 +16,7 @@ from .delivery import DeliveryService, delivery_service
 from .directory import DirectoryService, directory_service
 from .rendering import ReportRenderer, report_renderer
 from .reports import ReportService, report_service
+from .team_editing import ReportGenerationDeferred
 from .workflow_config import WorkflowConfigService, workflow_config_service
 
 
@@ -313,7 +314,10 @@ class RobotCommandService:
                 parts.append(f"AI 表同步失败：{exc}")
             return "\n".join(parts)
         if command == "generate":
-            report = self.reports.generate(report_kind=parsed["reportKind"], actor=actor)
+            try:
+                report = self.reports.generate(report_kind=parsed["reportKind"], actor=actor)
+            except ReportGenerationDeferred as exc:
+                return str(exc)
             return f"已生成周报 #{report['id']} v{report['version']}，共纳入 {report['metrics']['itemCount']} 项。"
         report = self._resolve_report(parsed.get("reportId"), row, command)
         report_id = int(report["id"])

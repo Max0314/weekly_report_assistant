@@ -2,12 +2,20 @@ from __future__ import annotations
 
 import tempfile
 import unittest
+from datetime import datetime, timedelta
 from pathlib import Path
 
 from app.db import Database
 from app.services.delivery import DeliveryError, DeliveryService
 from app.services.reports import ReportService
+from app.services.scheduler import SchedulerService
+from app.services.team_editing import (
+    ReportGenerationDeferred,
+    TeamEditConflict,
+    TeamEditLeaseLost,
+)
 from app.services.workflow_config import WorkflowConfigService
+from app.time_utils import SHANGHAI
 
 
 class FakeAI:
@@ -373,6 +381,95 @@ class ReportsAndDeliveryTests(unittest.TestCase):
                     (second["reportId"],),
                 )
             ),
+        )
+
+    def test_team_edit_lease_conflicts_and_expires_after_thirty_idle_minutes(self) -> None:
+        self.seed_source()
+        report = self.reports.generate(period_key="week:20260810", use_ai=False)
+        started = datetime(2026, 8, 15, 10, 0, tzinfo=SHANGHAI)
+        first = self.reports.team_editing.acquire(
+            report["id"], actor="dingtalk:u1", owner_name="编辑甲", now=started
+        )
+        with self.assertRaises(TeamEditConflict):
+            self.reports.team_editing.acquire(
+                report["id"], actor="dingtalk:u2", owner_name="编辑乙", now=started
+            )
+        touched = self.reports.team_editing.touch(
+            report["id"],
+            actor="dingtalk:u1",
+            lease_token=first["leaseToken"],
+            now=started + timedelta(minutes=20),
+        )
+        self.assertIn("10:50:00", touched["expiresAt"])
+        second = self.reports.team_editing.acquire(
+            report["id"],
+            actor="dingtalk:u2",
+            owner_name="编辑乙",
+            now=started + timedelta(minutes=51),
+        )
+        self.assertTrue(second["leaseToken"])
+        with self.assertRaises(TeamEditLeaseLost):
+            self.reports.team_editing.touch(
+                report["id"],
+                actor="dingtalk:u1",
+                lease_token=first["leaseToken"],
+                now=started + timedelta(minutes=51),
+            )
+
+    def test_deferred_generation_reapplies_team_patch_and_preserves_personal_report(self) -> None:
+        self.seed_source()
+        report = self.reports.generate(period_key="week:20260810", use_ai=False)
+        lease = self.reports.team_editing.acquire(
+            report["id"], actor="dingtalk:editor", owner_name="团队编辑"
+        )
+        with self.assertRaises(ReportGenerationDeferred):
+            self.reports.generate(
+                period_key="week:20260810",
+                report_kind="combined",
+                actor="scheduler",
+                use_ai=False,
+            )
+        personal = self.reports.update_personal(
+            report["id"],
+            user_id="u1",
+            summary="个人内容继续保存",
+            category_digests={},
+            item_overrides={},
+            actor="dingtalk:u1",
+        )
+        edited = self.reports.update_sections(
+            report["id"],
+            {"risks": "人工修订风险"},
+            actor="dingtalk:editor",
+        )
+        self.assertGreater(edited["version"], personal["version"])
+        period_key, report_kind = self.reports.team_editing.assert_owner(
+            edited["id"],
+            actor="dingtalk:editor",
+            lease_token=lease["leaseToken"],
+        )
+        self.assertTrue(
+            self.reports.team_editing.attach_manual_patch(
+                period_key=period_key,
+                report_kind=report_kind,
+                title=None,
+                sections={"risks": "人工修订风险"},
+                actor="dingtalk:editor",
+            )
+        )
+        self.reports.team_editing.release(
+            edited["id"],
+            actor="dingtalk:editor",
+            lease_token=lease["leaseToken"],
+        )
+        processed = SchedulerService(database=self.db, reports=self.reports).process_pending_generations()
+        self.assertEqual("success", processed[0]["status"])
+        generated = self.reports.latest(period_key="week:20260810", report_kind="combined")
+        self.assertIsNotNone(generated)
+        self.assertEqual("人工修订风险", generated["sections"]["risks"])
+        self.assertEqual(
+            "个人内容继续保存",
+            self.reports.personal(generated["id"], user_id="u1")["summary"],
         )
 
     def test_project_manager_coverage_combines_roster_and_weekly_facts(self) -> None:

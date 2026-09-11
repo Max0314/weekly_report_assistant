@@ -28,6 +28,11 @@ from .services.reports import NON_EDITABLE_STATES, REPORT_KINDS, report_service
 from .services.robot_commands import robot_command_service
 from .services.scheduler import scheduler_service
 from .services.teambition import teambition_service
+from .services.team_editing import (
+    ReportGenerationDeferred,
+    TeamEditConflict,
+    TeamEditLeaseLost,
+)
 from .services.workflow_config import workflow_config_service
 from .time_utils import now_local
 
@@ -44,6 +49,11 @@ class GenerateBody(BaseModel):
 class SectionsBody(BaseModel):
     sections: dict[str, Any]
     title: str | None = Field(default=None, max_length=200)
+    editLeaseToken: str = Field(min_length=20, max_length=200)
+
+
+class EditLeaseBody(BaseModel):
+    leaseToken: str = Field(default="", max_length=200)
 
 
 class PersonalEditBody(BaseModel):
@@ -124,6 +134,26 @@ def _raise_api_error(exc: Exception) -> None:
     if isinstance(exc, HTTPException):
         raise exc
     raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+def _team_edit_error(exc: Exception) -> None:
+    if isinstance(exc, TeamEditConflict):
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    if isinstance(exc, TeamEditLeaseLost):
+        raise HTTPException(status_code=423, detail=str(exc)) from exc
+    _raise_api_error(exc)
+
+
+def _actor_display_name(request: Request, actor: str) -> str:
+    session_token = str(request.cookies.get(SESSION_COOKIE) or "").strip()
+    if session_token:
+        try:
+            identity = admin_auth_service.authenticate(session_token)
+            if identity.actor == actor:
+                return identity.name
+        except AdminAuthError:
+            pass
+    return "运维管理员"
 
 
 def _auth_error_page(message: str, *, status_code: int = 400) -> HTMLResponse:
@@ -672,13 +702,15 @@ def update_personal_report(
 
 
 @router.post("/api/reports/generate")
-def generate_report(body: GenerateBody, actor: str = Depends(_admin_token)) -> dict[str, Any]:
+def generate_report(body: GenerateBody, actor: str = Depends(_admin_token)) -> Any:
     if body.reportKind not in REPORT_KINDS:
         raise HTTPException(status_code=422, detail="reportKind must be combined, product or project")
     try:
         return report_service.generate(
             period_key=body.periodKey, report_kind=body.reportKind, actor=actor, use_ai=body.useAI
         )
+    except ReportGenerationDeferred as exc:
+        return JSONResponse(status_code=202, content=exc.as_dict())
     except Exception as exc:
         _raise_api_error(exc)
 
@@ -691,6 +723,60 @@ def get_report(report_id: int, _: str = Depends(_admin_token)) -> dict[str, Any]
         _raise_api_error(exc)
 
 
+@router.post("/api/reports/{report_id}/edit-lease")
+def acquire_report_edit_lease(
+    report_id: int,
+    body: EditLeaseBody,
+    request: Request,
+    actor: str = Depends(_admin_token),
+) -> dict[str, Any]:
+    try:
+        return report_service.team_editing.acquire(
+            report_id,
+            actor=actor,
+            owner_name=_actor_display_name(request, actor),
+            lease_token=body.leaseToken,
+        )
+    except Exception as exc:
+        _team_edit_error(exc)
+
+
+@router.post("/api/reports/{report_id}/edit-lease/activity")
+def touch_report_edit_lease(
+    report_id: int,
+    body: EditLeaseBody,
+    actor: str = Depends(_admin_token),
+) -> dict[str, Any]:
+    try:
+        return report_service.team_editing.touch(
+            report_id,
+            actor=actor,
+            lease_token=body.leaseToken,
+        )
+    except Exception as exc:
+        _team_edit_error(exc)
+
+
+@router.delete("/api/reports/{report_id}/edit-lease")
+def release_report_edit_lease(
+    report_id: int,
+    body: EditLeaseBody,
+    background_tasks: BackgroundTasks,
+    actor: str = Depends(_admin_token),
+) -> dict[str, Any]:
+    try:
+        result = report_service.team_editing.release(
+            report_id,
+            actor=actor,
+            lease_token=body.leaseToken,
+        )
+        if result.get("generationQueued"):
+            background_tasks.add_task(scheduler_service.process_pending_generations)
+        return result
+    except Exception as exc:
+        _team_edit_error(exc)
+
+
 @router.get("/api/reports/{report_id}/public-urls")
 def get_report_public_urls(report_id: int, _: str = Depends(_admin_token)) -> dict[str, str]:
     try:
@@ -701,14 +787,41 @@ def get_report_public_urls(report_id: int, _: str = Depends(_admin_token)) -> di
 
 
 @router.put("/api/reports/{report_id}/sections")
-def update_report(report_id: int, body: SectionsBody, actor: str = Depends(_admin_token)) -> dict[str, Any]:
+def update_report(
+    report_id: int,
+    body: SectionsBody,
+    background_tasks: BackgroundTasks,
+    actor: str = Depends(_admin_token),
+) -> dict[str, Any]:
     try:
-        return report_service.update_sections(
+        period_key, report_kind = report_service.team_editing.assert_owner(
+            report_id,
+            actor=actor,
+            lease_token=body.editLeaseToken,
+        )
+        result = report_service.update_sections(
             report_id,
             body.sections,
             actor=actor,
             title=body.title,
         )
+        report_service.team_editing.attach_manual_patch(
+            period_key=period_key,
+            report_kind=report_kind,
+            title=body.title,
+            sections=body.sections,
+            actor=actor,
+        )
+        released = report_service.team_editing.release(
+            int(result["id"]),
+            actor=actor,
+            lease_token=body.editLeaseToken,
+        )
+        if released.get("generationQueued"):
+            background_tasks.add_task(scheduler_service.process_pending_generations)
+        return result
+    except (TeamEditConflict, TeamEditLeaseLost) as exc:
+        _team_edit_error(exc)
     except Exception as exc:
         _raise_api_error(exc)
 

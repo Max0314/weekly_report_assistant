@@ -252,6 +252,39 @@ CREATE TABLE IF NOT EXISTS weekly_report_personal_edit (
 CREATE INDEX IF NOT EXISTS idx_weekly_report_personal_edit_updated
 ON weekly_report_personal_edit(updated_at DESC);
 
+CREATE TABLE IF NOT EXISTS weekly_report_edit_lease (
+    period_key TEXT NOT NULL,
+    report_kind TEXT NOT NULL,
+    report_id INTEGER NOT NULL,
+    owner_actor TEXT NOT NULL,
+    owner_name TEXT NOT NULL DEFAULT '',
+    lease_token_hash TEXT NOT NULL,
+    acquired_at TEXT NOT NULL,
+    last_activity_at TEXT NOT NULL,
+    expires_at TEXT NOT NULL,
+    PRIMARY KEY(period_key, report_kind)
+);
+CREATE INDEX IF NOT EXISTS idx_weekly_report_edit_lease_expiry
+ON weekly_report_edit_lease(expires_at);
+
+CREATE TABLE IF NOT EXISTS weekly_report_generation_queue (
+    period_key TEXT NOT NULL,
+    report_kind TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'pending',
+    use_ai INTEGER NOT NULL DEFAULT 1,
+    requested_by TEXT NOT NULL DEFAULT '',
+    request_count INTEGER NOT NULL DEFAULT 1,
+    requested_at TEXT NOT NULL,
+    next_retry_at TEXT NOT NULL DEFAULT '',
+    error_text TEXT NOT NULL DEFAULT '',
+    manual_patch_json TEXT NOT NULL DEFAULT '{}',
+    generated_report_id INTEGER NOT NULL DEFAULT 0,
+    updated_at TEXT NOT NULL,
+    PRIMARY KEY(period_key, report_kind)
+);
+CREATE INDEX IF NOT EXISTS idx_weekly_report_generation_queue_status
+ON weekly_report_generation_queue(status, next_retry_at);
+
 CREATE TABLE IF NOT EXISTS dingtalk_robot_event (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     conversation_id TEXT NOT NULL DEFAULT '',
