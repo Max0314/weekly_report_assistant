@@ -322,14 +322,10 @@ class RobotCommandService:
         report = self._resolve_report(parsed.get("reportId"), row, command)
         report_id = int(report["id"])
         if command == "preview":
-            if not report.get("imageReady"):
-                self.renderer.render(report_id)
             result = self.delivery.preview(report_id)
             return f"周报 #{report_id} 预览已处理：成功 {result['sent']}，失败 {result['failed']}。"
         if command == "confirm":
             self.reports.approve(report_id, actor=actor)
-            if not self.reports.get(report_id).get("imageReady"):
-                self.renderer.render(report_id)
             result = self.delivery.formal(report_id)
             return f"周报 #{report_id} 已审核并正式推送：成功 {result['sent']}，失败 {result['failed']}。"
         if command == "changes":

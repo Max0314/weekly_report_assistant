@@ -7,6 +7,9 @@ from app.services.workflow_config import normalize_config
 
 
 class WorkflowConfigTests(unittest.TestCase):
+    def test_historical_image_setting_is_permanently_ignored(self) -> None:
+        self.assertFalse(normalize_config({"sendGroupImages": True})["sendGroupImages"])
+
     def test_formal_send_is_automatic_without_review_gates_and_targets_are_deduplicated(self) -> None:
         config = normalize_config(
             {

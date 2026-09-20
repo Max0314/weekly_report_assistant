@@ -19,6 +19,13 @@ SOURCE_TABLES: list[dict[str, Any]] = [
         "eventDateFields": ["交流日期"],
         "productManagerFields": ["产品经理"],
         "assigneeFields": [{"fields": ["产品经理"], "role": "产品经理"}],
+        "displayFields": [
+            {"key": "date", "label": "日期", "fields": ["交流日期"]},
+            {"key": "object", "label": "对象", "fields": ["对象名称"]},
+            {"key": "method", "label": "方式", "fields": ["交流方式"]},
+            {"key": "content", "label": "主要内容与结论", "fields": ["主要内容"]},
+            {"key": "owner", "label": "负责人", "fields": ["产品经理"], "readOnly": True},
+        ],
     },
     {
         "key": "tenders",
@@ -33,6 +40,14 @@ SOURCE_TABLES: list[dict[str, Any]] = [
         "planFields": ["下周计划"],
         "productManagerFields": ["产品经理"],
         "assigneeFields": [{"fields": ["产品经理"], "role": "产品经理"}],
+        "displayFields": [
+            {"key": "tender", "label": "标案", "fields": ["招标名称"]},
+            {"key": "customer", "label": "客户", "fields": ["客户"]},
+            {"key": "status", "label": "状态", "fields": ["状态"]},
+            {"key": "progress", "label": "本周进展", "fields": ["本周进展"], "weekly": True},
+            {"key": "plan", "label": "下周计划", "fields": ["下周计划"]},
+            {"key": "owner", "label": "负责人", "fields": ["产品经理"], "readOnly": True},
+        ],
     },
     {
         "key": "research",
@@ -48,6 +63,14 @@ SOURCE_TABLES: list[dict[str, Any]] = [
         "planFields": ["后续计划"],
         "productManagerFields": ["产品经理"],
         "assigneeFields": [{"fields": ["产品经理"], "role": "产品经理"}],
+        "displayFields": [
+            {"key": "item", "label": "事项", "fields": ["事项标题"]},
+            {"key": "type", "label": "类型", "fields": ["事项类型"]},
+            {"key": "status", "label": "状态", "fields": ["事项状态"]},
+            {"key": "progress", "label": "本周进展", "fields": ["当前进展"], "weekly": True},
+            {"key": "plan", "label": "后续计划", "fields": ["后续计划"]},
+            {"key": "owner", "label": "负责人", "fields": ["产品经理"], "readOnly": True},
+        ],
     },
     {
         "key": "projects",
@@ -65,6 +88,14 @@ SOURCE_TABLES: list[dict[str, Any]] = [
             {"fields": ["项目经理", "项目负责人"], "role": "项目负责人"},
         ],
         "projectView": True,
+        "displayFields": [
+            {"key": "project", "label": "项目", "fields": ["项目名称"]},
+            {"key": "code", "label": "编号", "fields": ["项目编号"]},
+            {"key": "projectId", "label": "ProjectID", "fields": ["ProjectID"], "readOnly": True},
+            {"key": "status", "label": "状态", "fields": ["项目状态"]},
+            {"key": "progress", "label": "本周进展", "fields": ["本周进展"], "weekly": True},
+            {"key": "owner", "label": "负责人", "fields": ["产品经理", "项目经理", "项目负责人"], "readOnly": True},
+        ],
     },
     {
         "key": "other",
@@ -81,6 +112,14 @@ SOURCE_TABLES: list[dict[str, Any]] = [
         "eventDateFields": ["添加时间"],
         "productManagerFields": ["产品经理"],
         "assigneeFields": [{"fields": ["产品经理"], "role": "产品经理"}],
+        "displayFields": [
+            {"key": "item", "label": "事项", "fields": ["事项名称"]},
+            {"key": "type", "label": "类型", "fields": ["类型"]},
+            {"key": "status", "label": "状态", "fields": ["事项状态"]},
+            {"key": "progress", "label": "本周进展", "fields": ["本周进展"], "weekly": True},
+            {"key": "plan", "label": "下周计划", "fields": ["下周计划"]},
+            {"key": "owner", "label": "负责人", "fields": ["产品经理"], "readOnly": True},
+        ],
     },
     {
         "key": "product_management",
@@ -95,6 +134,13 @@ SOURCE_TABLES: list[dict[str, Any]] = [
         "planFields": ["下周计划"],
         "productManagerFields": ["产品经理"],
         "assigneeFields": [{"fields": ["产品经理"], "role": "产品经理"}],
+        "displayFields": [
+            {"key": "item", "label": "事项", "fields": ["产品管理事项名称"]},
+            {"key": "status", "label": "状态", "fields": ["事项状态"]},
+            {"key": "progress", "label": "本周进展", "fields": ["本周进展"], "weekly": True},
+            {"key": "plan", "label": "下周计划", "fields": ["下周计划"]},
+            {"key": "owner", "label": "负责人", "fields": ["产品经理"], "readOnly": True},
+        ],
     },
     {
         "key": "support",
@@ -115,6 +161,14 @@ SOURCE_TABLES: list[dict[str, Any]] = [
             {"fields": ["责任人"], "role": "责任人"},
         ],
         "projectView": True,
+        "displayFields": [
+            {"key": "item", "label": "事项", "fields": ["支持事项描述"]},
+            {"key": "priority", "label": "紧急", "fields": ["紧急程度"]},
+            {"key": "status", "label": "状态", "fields": ["状态"]},
+            {"key": "due", "label": "截止日期", "fields": ["截止日期"]},
+            {"key": "remark", "label": "备注", "fields": []},
+            {"key": "owner", "label": "负责人", "fields": ["责任人", "产品经理"], "readOnly": True},
+        ],
     },
     {
         "key": "product_manager_roster",
@@ -192,7 +246,7 @@ DEFAULT_WORKFLOW_CONFIG: dict[str, Any] = {
     "quietEndHour": 8,
     "dueSoonDays": 14,
     "enforceDirectoryForFormalSend": True,
-    "sendGroupImages": True,
+    "sendGroupImages": False,
     "reportTitle": "产品与项目管理周报",
     "defaultRobotCode": "",
     "previewGroupTargets": [],

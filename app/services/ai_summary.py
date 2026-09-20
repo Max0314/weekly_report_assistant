@@ -16,6 +16,14 @@ SECTION_KEYS = (
     "nextPlans",
     "supportNeeds",
 )
+BOARD_SECTION_KEYS = (
+    "weeklyHighlights",
+    "visits",
+    "riskRadar",
+    "productManagement",
+    "marketInfo",
+    "nextMilestones",
+)
 
 
 class AISummaryError(RuntimeError):
@@ -47,6 +55,26 @@ def _extract_json(text: str) -> dict[str, Any]:
     }
     if not result["executiveSummary"]:
         raise AISummaryError("AI summary is missing executiveSummary")
+    return result
+
+
+def _extract_board_json(text: str) -> dict[str, str]:
+    normalized = text.strip()
+    if normalized.startswith("```"):
+        normalized = normalized.strip("`").removeprefix("json").strip()
+    start = normalized.find("{")
+    end = normalized.rfind("}")
+    if start < 0 or end <= start:
+        raise AISummaryError("AI response did not contain a JSON object")
+    try:
+        value = json.loads(normalized[start : end + 1])
+    except json.JSONDecodeError as exc:
+        raise AISummaryError(f"invalid AI JSON: {exc}") from exc
+    if not isinstance(value, dict):
+        raise AISummaryError("AI JSON must be an object")
+    result = {key: str(value.get(key) or "").strip() for key in BOARD_SECTION_KEYS}
+    if not result["weeklyHighlights"]:
+        raise AISummaryError("AI board summary is missing weeklyHighlights")
     return result
 
 
@@ -209,6 +237,103 @@ class AISummaryClient:
         if isinstance(content, list):
             content = "".join(str(item.get("text") or "") for item in content if isinstance(item, dict))
         return _extract_json(str(content or ""))
+
+    def summarize_board(
+        self,
+        *,
+        board_label: str,
+        window: dict[str, Any],
+        metrics: dict[str, Any],
+        items: list[dict[str, Any]],
+        fallback: dict[str, str],
+        project_baseline: list[dict[str, Any]] | None = None,
+    ) -> dict[str, str]:
+        if not items:
+            return fallback
+        model_config = self._model_config()
+        if not all(model_config.get(key) for key in ("apiBase", "apiKey", "model")):
+            raise AISummaryError("AI model is not configured")
+        limit = self.settings.ai_max_items
+        text_limit = self.settings.ai_max_text_chars
+
+        def clipped(value: Any) -> str:
+            return str(value or "").strip()[:text_limit]
+
+        prioritized = sorted(
+            items,
+            key=lambda item: (
+                not bool(item.get("riskText") or item.get("overdue")),
+                not (item.get("priority") in {"高", "紧急"}),
+                str(item.get("dueAt") or "9999"),
+            ),
+        )[:limit]
+        facts = [
+            {
+                "categoryKey": item.get("categoryKey"),
+                "category": item.get("category"),
+                "title": clipped(item.get("title")),
+                "status": clipped(item.get("status")),
+                "priority": clipped(item.get("priority")),
+                "progress": clipped(item.get("progressText")),
+                "plan": clipped(item.get("planText")),
+                "risk": clipped(item.get("riskText")),
+                "eventAt": item.get("eventAt"),
+                "dueAt": item.get("dueAt"),
+            }
+            for item in prioritized
+        ]
+        prompt = {
+            "task": f"仅依据输入事实生成产品与项目管理周报的“{board_label}”板块，不得引用或猜测其他板块事实。",
+            "window": window,
+            "metrics": metrics,
+            "facts": facts,
+            "fallback": fallback,
+            "projectBackground": [
+                {
+                    "direction": clipped(item.get("direction")),
+                    "name": clipped(item.get("name")),
+                    "status": clipped(item.get("status")),
+                    "description": clipped(item.get("description")),
+                }
+                for item in (project_baseline or [])
+                if isinstance(item, dict) and item.get("visible") is not False
+            ][:100],
+            "output": {key: "换行分隔的商务书面语条目" for key in BOARD_SECTION_KEYS},
+            "rules": [
+                "输出单个 JSON 对象，不使用 Markdown 代码块",
+                "六个字段分别对应本周要事、拜访交流、风险雷达、产品策划&管理、市场信息、下周关键节点",
+                "结论先行，只报事实、变化、影响与下一步，不新增事实或数字",
+                "市场招投标不得漏掉输入中的有效标案",
+                "无事实写暂无，不评价个人绩效，不输出其他业务板块内容",
+            ],
+        }
+        url = model_config["apiBase"].rstrip("/")
+        if not url.endswith("/chat/completions"):
+            url = f"{url}/chat/completions"
+        try:
+            response = request_json(
+                url,
+                method="POST",
+                headers={"Authorization": f"Bearer {model_config['apiKey']}"},
+                payload=build_chat_payload(
+                    model_config,
+                    messages=[
+                        {"role": "system", "content": "你是企业周报编辑器。严格依据输入事实返回约定 JSON。"},
+                        {"role": "user", "content": json.dumps(prompt, ensure_ascii=False)},
+                    ],
+                    max_tokens=4200,
+                    temperature=0.2,
+                ),
+                timeout=max(self.settings.http_timeout_seconds, 60),
+            )
+        except JsonHttpError as exc:
+            raise AISummaryError(str(exc)) from exc
+        choices = response.get("choices") if isinstance(response, dict) and isinstance(response.get("choices"), list) else []
+        message = choices[0].get("message") if choices and isinstance(choices[0], dict) else {}
+        content = message.get("content") if isinstance(message, dict) else ""
+        if isinstance(content, list):
+            content = "".join(str(item.get("text") or "") for item in content if isinstance(item, dict))
+        return _extract_board_json(str(content or ""))
 
 
 ai_summary_client = AISummaryClient()

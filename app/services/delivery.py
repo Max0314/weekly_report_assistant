@@ -64,6 +64,69 @@ class DeliveryService:
             text = re.sub(r"\s+", " ", str(value or "")).strip()
             return text if len(text) <= limit else f"{text[: limit - 1].rstrip()}…"
 
+        board_sections = sections.get("boardSections") or {}
+        if isinstance(board_sections, dict) and board_sections:
+            labels = {"domestic": "国内", "overseas_iot": "海外 + 物联网"}
+            by_board = metrics.get("byBoard") or {}
+            lines = [
+                f"### {prefix}{report.get('title') or '产品与项目管理周报'}",
+                "",
+                f"**周期**：{(report.get('window') or {}).get('label') or report.get('periodKey')}",
+                f"**版本**：v{report.get('version')}",
+                "",
+            ]
+            for board_key in ("domestic", "overseas_iot"):
+                board = board_sections.get(board_key) or {}
+                board_values = board.get("sections") if isinstance(board.get("sections"), dict) else board
+                board_metrics = by_board.get(board_key) or board.get("metrics") or {}
+                lines.extend(
+                    [
+                        f"## {labels[board_key]}",
+                        "",
+                        f"- 纳入事项：**{int(board_metrics.get('itemCount') or 0)}** 项 ｜ "
+                        f"风险：**{int(board_metrics.get('riskCount') or 0)}** 项 ｜ "
+                        f"逾期：**{int(board_metrics.get('overdueCount') or 0)}** 项",
+                        "",
+                        "**本周要事**",
+                        "",
+                        compact(board_values.get("weeklyHighlights") or "本周无", 360),
+                        "",
+                        "**风险雷达**",
+                        "",
+                        compact(board_values.get("riskRadar") or "本周无", 260),
+                        "",
+                        "**下周关键节点**",
+                        "",
+                        compact(board_values.get("nextMilestones") or "本周无", 260),
+                        "",
+                    ]
+                )
+            issues = sections.get("classificationIssues") or []
+            if issues:
+                lines.extend(
+                    [
+                        "---",
+                        "",
+                        f"**归类警告**：有 {len(issues)} 条事项未能按产品经理部门归类，"
+                        "测试消息允许发送，但最终版与正式发送会被阻断。",
+                        "",
+                    ]
+                )
+            lines.append("> 完整六章内容与事实明细请通过卡片链接查看。")
+            if preview:
+                lines.extend(
+                    [
+                        "",
+                        "---",
+                        "",
+                        "**审核操作**",
+                        "",
+                        "- 通过：回复 `确认发送`",
+                        "- 退回：回复 `需要修改：具体意见`",
+                    ]
+                )
+            return "\n".join(lines)
+
         summary = str(sections.get("executiveSummary") or "暂无总结").strip()
         summary_sentences = [
             compact(item)
@@ -316,14 +379,12 @@ class DeliveryService:
                 raise DeliveryError("report must be approved before formal delivery")
             if config.get("enforceDirectoryForFormalSend") and self.directory.cache_status()["count"] <= 0:
                 raise DeliveryError("bi_center employee directory cache is empty; formal delivery is blocked")
-        if config.get("sendGroupImages") and not report.get("imageReady"):
-            raise DeliveryError("report image must be rendered before delivery")
         try:
             urls = self.renderer.public_urls(report_id)
         except Exception as exc:
-            if config.get("sendGroupImages"):
-                raise DeliveryError(str(exc)) from exc
-            urls = {"reportUrl": "", "imageUrl": ""}
+            raise DeliveryError(str(exc)) from exc
+        if not urls.get("reportUrl"):
+            raise DeliveryError("PUBLIC_BASE_URL and PUBLIC_LINK_SECRET are required for report delivery")
         personal_url = ""
         personal_url_factory = getattr(self.renderer, "personal_report_url", None)
         if callable(personal_url_factory):
@@ -332,8 +393,6 @@ class DeliveryService:
             raise DeliveryError(
                 "PUBLIC_BASE_URL and DingTalk SSO are required for personal report delivery"
             )
-        if config.get("sendGroupImages") and not urls.get("imageUrl"):
-            raise DeliveryError("PUBLIC_BASE_URL and PUBLIC_LINK_SECRET are required for image delivery")
         message_is_preview = preview and not is_non_state_delivery
         markdown = self._markdown(report, preview=message_is_preview)
         phase = non_state_phase or ("preview" if preview else "formal")
@@ -432,42 +491,6 @@ class DeliveryService:
             results.append({"target": name, "messageType": "card", **card_result})
             sent += 1 if card_result.get("sent") else 0
             failed += 0 if card_result.get("sent") else 1
-            if not (config.get("sendGroupImages") and urls.get("imageUrl")):
-                continue
-            image_key = f"report:{report_id}:{phase}:{target_type}:{target_id}:{robot_code}:image"
-            image_claim = self._claim_send(image_key)
-            if image_claim == "sent":
-                image_result = {"sent": True, "skipped": True, "processQueryKey": "", "error": ""}
-            elif image_claim == "pending":
-                raise DeliveryError(f"image delivery is already in progress for {name}")
-            else:
-                if target_type == "group":
-                    image_result = self.robot.send_group(
-                        open_conversation_id=conversation_id,
-                        robot_code=robot_code,
-                        msg_key="sampleImageMsg",
-                        msg_param={"photoURL": urls["imageUrl"]},
-                    )
-                else:
-                    image_result = self.robot.send_private(
-                        [target_id], robot_code=robot_code, msg_key="sampleImageMsg",
-                        msg_param={"photoURL": urls["imageUrl"]},
-                    )
-                self._log(
-                    report_id=report_id,
-                    target_type=target_type,
-                    target_name=name,
-                    target_id=target_id,
-                    conversation_id=conversation_id,
-                    robot_code=robot_code,
-                    msg_key="sampleImageMsg",
-                    result=image_result,
-                    idempotency_key=image_key,
-                    snapshot={"phase": phase, "imageUrl": urls.get("imageUrl")},
-                )
-            results.append({"target": name, "messageType": "image", **image_result})
-            sent += 1 if image_result.get("sent") else 0
-            failed += 0 if image_result.get("sent") else 1
         timestamp = to_db(now_local())
         if is_non_state_delivery:
             state = str(report.get("workflowState") or "")
@@ -533,6 +556,11 @@ class DeliveryService:
         normalized_key = re.sub(r"[^0-9A-Za-z._-]+", "-", str(schedule_key or "").strip()).strip("-._")[:120]
         if not normalized_key:
             raise DeliveryError("Saturday final schedule key is required")
+        current, reason = self.reports.formal_version_is_current(
+            report_id, require_approval=False
+        )
+        if not current:
+            raise DeliveryError(reason)
         targets = [
             item
             for item in self.config_service.get().get("saturdayFinalPersonalTargets") or []

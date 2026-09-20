@@ -15,7 +15,7 @@
 4. 执行 `docker compose up -d --build`，等待 Chromium 依赖安装和健康检查通过。
 5. 从 `bi_center` 正式容器的受保护运行环境安全复制 `TEAMBITION_SOURCE=native`、`TEAMBITION_OPEN_API_BASE`、`TEAMBITION_OPEN_APP_ID`、`TEAMBITION_OPEN_APP_SECRET` 和 `TEAMBITION_OPEN_ORGANIZATION_ID`，不在终端输出值；保持 `TEAMBITION_SYNC_ENABLED=false`，先完成一次手动同步和看板核验。
 6. 钉钉开放平台新增 `Contact.User.Read`，配置并发布登录回调 `${PUBLIC_BASE_URL}/api/auth/dingtalk/callback`。首次访问管理页应自动进入钉钉授权；能匹配到 `bi_center` 有效在职人员目录的账号即可进入，登录不依赖周报确认人名单。
-7. 打开管理页，按“人员 → AI 表 → TB → 覆盖检查 → 生成 → 正文核对 → 图片 → 测试群核对 → 周日自动正式发送”的顺序联调；确认消息链路后再配置字段映射并启用存档回写。
+7. 打开管理页，按“人员 → AI 表 → TB → 覆盖检查 → 生成 → 双板块正文核对 → 测试群卡片核对 → 周日自动正式发送”的顺序联调；推送只包含摘要与签名链接，不生成或发送图片。确认消息链路后再配置字段映射并启用存档回写。
 
 ## Nginx 子路径
 

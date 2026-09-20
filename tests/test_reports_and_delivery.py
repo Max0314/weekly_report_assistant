@@ -151,6 +151,126 @@ class ReportsAndDeliveryTests(unittest.TestCase):
             """
         )
 
+    def seed_roster(self, user_id: str, name: str, department: str, record_id: str = "pm-1") -> None:
+        self.db.execute(
+            """
+            INSERT INTO source_record(
+              base_id,table_id,table_name,record_id,category,title,status,
+              product_manager_user_ids_json,product_manager_names_json,
+              first_seen_at,last_seen_at,changed_at,record_hash,raw_json
+            ) VALUES ('base','VdXcedx','产品经理名单',?,'人员名单',?,'在职',?,?,
+              '2026-08-01T09:00:00+08:00','2026-08-12T09:00:00+08:00',
+              '2026-08-12T09:00:00+08:00',?,?)
+            """,
+            (
+                record_id,
+                name,
+                f'["{user_id}"]',
+                f'["{name}"]',
+                f"hash-{record_id}",
+                '{"fieldValues":{"姓名":[{"userId":"' + user_id + '","name":"' + name + '"}],"所属部门":"' + department + '"}}',
+            ),
+        )
+
+    def test_business_boards_follow_roster_and_do_not_mix_sources(self) -> None:
+        self.seed_source()
+        self.seed_roster("u1", "产品甲", "中国区经营中心")
+        self.db.execute(
+            """
+            INSERT INTO source_record(
+              base_id,table_id,table_name,record_id,category,title,status,
+              product_manager_user_ids_json,product_manager_names_json,
+              first_seen_at,last_seen_at,changed_at,source_updated_at,record_hash,raw_json
+            ) VALUES ('base','0LDcV09','市场招投标','t1','市场招投标','海外标案','进行中',
+              '["u2"]','["产品乙"]','2026-08-01T09:00:00+08:00',
+              '2026-08-12T09:00:00+08:00','2026-08-12T09:00:00+08:00',
+              '2026-08-12T09:00:00+08:00','hash-t1',
+              '{"fieldValues":{"招标名称":"海外标案","状态":"进行中","产品经理":[{"userId":"u2","name":"产品乙"}]}}')
+            """
+        )
+        self.seed_roster("u2", "产品乙", "物联网事业部", "pm-2")
+
+        report = self.reports.generate(period_key="week:20260810", use_ai=False)
+
+        sources = {item["recordId"]: item for item in report["sources"]}
+        self.assertEqual("domestic", sources["r1"]["businessBoard"])
+        self.assertEqual("overseas_iot", sources["t1"]["businessBoard"])
+        self.assertEqual(1, report["metrics"]["byBoard"]["domestic"]["itemCount"])
+        self.assertEqual(1, report["metrics"]["byBoard"]["overseas_iot"]["itemCount"])
+        domestic_ids = report["sections"]["boardSections"]["domestic"]["sourceRecordIds"]
+        overseas_ids = report["sections"]["boardSections"]["overseas_iot"]["sourceRecordIds"]
+        self.assertEqual(["r1"], domestic_ids)
+        self.assertEqual(["t1"], overseas_ids)
+        self.assertEqual([], report["sections"]["classificationIssues"])
+        self.assertEqual([], report["classificationIssues"])
+        message = DeliveryService._markdown(report, preview=False)
+        self.assertIn("版本规划", message)
+        self.assertIn("海外标案", message)
+
+    def test_unclassified_items_block_final_but_test_markdown_warns(self) -> None:
+        self.seed_source()
+        report = self.reports.generate(period_key="week:20260810", use_ai=False)
+
+        current, reason = self.reports.formal_version_is_current(
+            report["id"], require_approval=False
+        )
+        self.assertFalse(current)
+        self.assertIn("unclassified", reason)
+        message = DeliveryService._markdown(report, preview=False)
+        self.assertIn("归类警告", message)
+        self.assertIn("正式发送会被阻断", message)
+        self.config.update({
+            "defaultRobotCode": "robot",
+            "saturdayFinalPersonalTargets": [{"name": "最终接收人", "userId": "u-final"}],
+        })
+        delivery = DeliveryService(
+            database=self.db, reports=self.reports, renderer=FakeRenderer(),
+            config_service=self.config, robot=FakeRobot(), directory=FakeDirectory(),
+        )
+        with self.assertRaisesRegex(DeliveryError, "unclassified"):
+            delivery.saturday_final(report["id"], schedule_key="week-20260810-sat17")
+
+    def test_personal_tables_keep_source_text_blank_stale_weekly_fields_and_allow_field_override(self) -> None:
+        self.db.execute(
+            """
+            INSERT INTO source_record(
+              base_id,table_id,table_name,record_id,category,title,status,progress_text,
+              product_manager_user_ids_json,product_manager_names_json,assignees_json,
+              first_seen_at,last_seen_at,source_updated_at,changed_at,record_hash,raw_json
+            ) VALUES ('base','PoYFuV8','产品管理事项','old-1','产品管理事项','源表事项','进行中','源表旧进展',
+              '["u1"]','["产品甲"]','[{"userId":"u1","name":"产品甲","role":"产品经理"}]',
+              '2026-08-01T09:00:00+08:00','2026-08-01T09:00:00+08:00',
+              '2026-08-01T09:00:00+08:00','2026-08-01T09:00:00+08:00','hash-old',
+              '{"fieldValues":{"产品管理事项名称":"源表事项","事项状态":"进行中","本周进展":"源表旧进展","下周计划":"源表计划"}}')
+            """
+        )
+        report = self.reports.generate(period_key="week:20260810", use_ai=False)
+        personal = self.reports.personal(report["id"], user_id="u1")
+
+        self.assertEqual(7, len(personal["tables"]))
+        product_table = next(item for item in personal["tables"] if item["tableId"] == "PoYFuV8")
+        owner_column = next(item for item in product_table["columns"] if item["key"] == "owner")
+        self.assertTrue(owner_column["readOnly"])
+        row = product_table["rows"][0]
+        self.assertEqual("源表旧进展", row["sourceValues"]["progress"])
+        self.assertEqual("", row["values"]["progress"])
+        self.assertIn("progress", row["missingWeeklyFields"])
+        self.assertIn("源表事项", personal["selfCheck"]["missingUpdates"])
+
+        edited = self.reports.update_personal(
+            report["id"], user_id="u1", summary="", category_digests={},
+            item_overrides={"old-1": {"displayFields": {
+                "progress": "本地补充进展", "owner": "非法改负责人"
+            }}},
+            actor="dingtalk:u1",
+        )
+        edited_table = next(item for item in edited["tables"] if item["tableId"] == "PoYFuV8")
+        edited_row = edited_table["rows"][0]
+        self.assertEqual("本地补充进展", edited_row["values"]["progress"])
+        self.assertIn("progress", edited_row["editedFields"])
+        self.assertNotIn("progress", edited_row["missingWeeklyFields"])
+        self.assertEqual("产品甲", edited_row["values"]["owner"])
+
     def test_report_generation_uses_weekly_facts(self) -> None:
         self.seed_source()
         report = self.reports.generate(period_key="week:20260810", use_ai=False)
@@ -611,6 +731,7 @@ class ReportsAndDeliveryTests(unittest.TestCase):
 
         self.assertTrue(first["testPush"])
         self.assertEqual(1, first["sent"])
+        self.assertEqual(["card"], [item["messageType"] for item in first["results"]])
         self.assertEqual("推送测试", first["results"][0]["target"])
         self.assertNotIn("【预览】", robot.group_calls[0]["msg_param"]["title"])
         self.assertNotIn("**审核操作**", robot.group_calls[0]["msg_param"]["text"])
@@ -618,6 +739,7 @@ class ReportsAndDeliveryTests(unittest.TestCase):
         self.assertTrue(second["results"][0]["skipped"])
         self.assertEqual(1, third["sent"])
         self.assertEqual(2, len(robot.group_calls))
+        self.assertTrue(all(call["msg_key"] != "sampleImageMsg" for call in robot.group_calls))
         current = self.reports.get(report["id"])
         self.assertEqual(report["workflowState"], current["workflowState"])
         self.assertEqual(report["confirmStatus"], current["confirmStatus"])

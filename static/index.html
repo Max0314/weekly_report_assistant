@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <meta name="theme-color" content="#f6f8fb">
   <title>产品与项目经理周报助手</title>
-  <link rel="stylesheet" href="static/styles.css?v=20260901a">
+  <link rel="stylesheet" href="static/styles.css?v=20260920a">
 </head>
 <body>
   <div class="app-shell">
@@ -242,14 +242,9 @@
             </aside>
             <div class="personal-report-column">
               <section id="personalHero" class="personal-hero"><div><span>MY WEEKLY REPORT</span><h2>个人周报</h2><p>请选择一个已生成的综合周报。</p></div></section>
-              <div id="personalStats" class="metric-grid personal-metrics">
-                <article class="metric-card"><span>关联事项</span><strong>—</strong><small>等待读取</small></article>
-              </div>
-              <section id="personalCharts" class="personal-chart-grid" aria-label="个人周报数据概览">
-                <div class="panel personal-chart-card"><div class="empty-state"><strong>暂无分类图表</strong><p>选择周报后展示工作分类分布。</p></div></div>
-              </section>
-              <section class="panel"><div class="section-head"><div><p class="eyebrow">SUMMARY</p><h2>本周总结</h2></div></div><p id="personalSummary" class="personal-summary">等待读取个人周报。</p></section>
-              <div id="personalCategories" class="personal-category-list"><div class="empty-state"><strong>暂无个人周报</strong><p>请先生成综合周报。</p></div></div>
+              <section id="personalSupplementPanel" class="panel" hidden><div class="section-head"><div><p class="eyebrow">NOTE</p><h2>个人补充说明</h2></div></div><p id="personalSummary" class="personal-summary"></p></section>
+              <div id="personalTables" class="personal-table-list"><div class="empty-state"><strong>暂无个人周报</strong><p>请先生成综合周报。</p></div></div>
+              <section class="panel personal-self-check"><div class="section-head"><div><p class="eyebrow">SELF CHECK</p><h2>本周自检</h2></div></div><div id="personalSelfCheck" class="personal-table-wrap"><p class="muted">等待读取。</p></div></section>
             </div>
           </div>
         </div>
@@ -265,7 +260,7 @@
           <section class="panel">
             <div class="section-head"><div><span class="section-index">01</span><h2>基础设置</h2><p>决定周报标题、统计截止时间和风险口径。</p></div></div>
             <div class="form-grid four-cols">
-              <label>周报标题<input id="reportTitle" placeholder="产品与项目管理周报"><small class="field-help">显示在周报页面、图片和钉钉消息顶部。</small></label>
+              <label>周报标题<input id="reportTitle" placeholder="产品与项目管理周报"><small class="field-help">显示在周报页面和钉钉消息顶部。</small></label>
               <label>周期截止日<select id="periodEndWeekday"><option value="0">周一</option><option value="1">周二</option><option value="2">周三</option><option value="3">周四</option><option value="4">周五</option><option value="5">周六</option><option value="6">周日</option></select><small class="field-help">每周统计窗口结束的星期；系统据此计算本周范围。</small></label>
               <label>周期截止时间<input id="periodEndTime" type="time"><small class="field-help">截止日当天停止纳入本周期事实的时间。</small></label>
               <label>临期范围（天）<input id="dueSoonDays" type="number" min="1" max="90"><small class="field-help">未完成且在该天数内到期的事项会纳入并重点提示。</small></label>
@@ -385,7 +380,6 @@
               <label class="toggle-card"><input id="autoPreviewEnabled" type="checkbox"><span><strong>自动发送预览</strong><small>只发测试目标，不触发正式发送。</small></span></label>
               <label class="toggle-card is-locked"><input id="requireApproval" type="checkbox" disabled><span><strong>不要求确认或审核</strong><small>人工审核可继续使用，但不会阻止周日自动发送。</small></span></label>
               <label class="toggle-card is-locked"><input id="requirePreviewBeforeFormal" type="checkbox" disabled><span><strong>不要求先行预览</strong><small>测试群预览用于核对，不是正式发送门槛。</small></span></label>
-              <label class="toggle-card"><input id="sendGroupImages" type="checkbox"><span><strong>群消息附带周报图片</strong><small>使用签名公开链接发送渲染图。</small></span></label>
               <label class="toggle-card is-locked"><input type="checkbox" checked disabled><span><strong>周日自动正式发送</strong><small>固定于周日 20:00 发送最新综合版。</small></span></label>
             </div>
           </section>
@@ -403,7 +397,8 @@
 
   <dialog id="reportDialog">
     <div class="dialog-head"><div><p class="eyebrow">REPORT DETAIL</p><h2 id="reportDialogTitle">周报详情</h2><p id="reportDialogMeta"></p></div><button id="closeReportDialog" class="icon-button" type="button" aria-label="关闭">×</button></div>
-    <div class="section-editor-grid">
+    <section id="reportBoardEditor" class="dialog-category-section" hidden><div><strong>业务板块正文</strong><span>分别编辑国内与海外 + 物联网的六个章节。</span></div><div id="reportBoardTabs" class="segmented"></div><div id="reportBoardFields" class="section-editor-grid"></div></section>
+    <div id="reportLegacySections" class="section-editor-grid">
       <label class="full-span">周报标题<input id="reportEditTitle" maxlength="200"></label>
       <label>本周进展摘要<textarea id="section-executiveSummary"></textarea></label>
       <label>产品管理进展<textarea id="section-productHighlights"></textarea></label>
@@ -420,13 +415,12 @@
   <dialog id="personalEditDialog">
     <div class="dialog-head"><div><p class="eyebrow">PERSONAL REPORT EDITOR</p><h2 id="personalEditTitle">编辑个人周报</h2><p id="personalEditMeta"></p></div><button id="closePersonalEdit" class="icon-button" type="button" aria-label="关闭">×</button></div>
     <div class="personal-edit-body">
-      <label>个人本周总结<textarea id="personalEditSummary" maxlength="12000"></textarea></label>
-      <section class="dialog-category-section personal-edit-categories"><div><strong>个人分类摘要</strong><span>只影响当前成员的个人周报，不会改写团队统计或多维表原始记录。</span></div><div id="personalEditCategories" class="dialog-category-list"></div></section>
-      <section class="dialog-category-section personal-edit-items"><div><strong>个人事项内容</strong><span>可修改标题、状态、优先级、本周进展、下周计划和风险；TB项目状态为官方来源，只读保留。</span></div><div id="personalEditItems" class="personal-item-editor-list"></div></section>
+      <label>个人补充说明（选填）<textarea id="personalEditSummary" maxlength="12000"></textarea></label>
+      <section class="dialog-category-section personal-edit-items"><div><strong>个人周报表格</strong><span>默认展示源表原文；本地修改只影响当前周报版本，可随时恢复源值。</span></div><div id="personalEditItems" class="personal-item-editor-list"></div></section>
     </div>
     <div class="dialog-actions"><div class="dialog-action-copy"><strong>编辑个人周报</strong><span id="personalDirtyHint">保存后生成新的最新综合版，周日 20:00 将自动发送该版。</span></div><div class="actions"><button id="cancelPersonalEdit" class="secondary" type="button">取消</button><button id="savePersonalEdit" type="button" disabled>保存个人周报</button></div></div>
   </dialog>
 
-  <script src="static/app.js?v=20260911a"></script>
+  <script src="static/app.js?v=20260920a"></script>
 </body>
 </html>

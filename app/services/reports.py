@@ -22,6 +22,9 @@ KEY_PROJECT_TABLE_ID = next(
     str(item["tableId"]) for item in SOURCE_TABLES if item.get("key") == "projects"
 )
 ROSTER_TABLE_IDS = {str(item["tableId"]) for item in SOURCE_TABLES if item.get("roster")}
+BUSINESS_TABLE_IDS = {
+    str(item["tableId"]) for item in SOURCE_TABLES if item.get("displayFields")
+}
 FINAL_STATES = {"formal_sent", "recalled", "cancelled"}
 NON_EDITABLE_STATES = FINAL_STATES | {"superseded"}
 EDITABLE_SECTION_KEYS = (
@@ -32,6 +35,23 @@ EDITABLE_SECTION_KEYS = (
     "nextPlans",
     "supportNeeds",
 )
+BOARD_SECTION_KEYS = (
+    "weeklyHighlights",
+    "visits",
+    "riskRadar",
+    "productManagement",
+    "marketInfo",
+    "nextMilestones",
+)
+BUSINESS_BOARDS = (
+    ("domestic", "国内"),
+    ("overseas_iot", "海外 + 物联网"),
+)
+DEPARTMENT_BOARD_MAP = {
+    "中国区经营中心": "domestic",
+    "海外经营中心": "overseas_iot",
+    "物联网事业部": "overseas_iot",
+}
 PERSONAL_ITEM_EDIT_KEYS = (
     "title",
     "status",
@@ -98,6 +118,27 @@ def _normalized_digest(value: Any, *, limit: int = 5) -> str:
 
 def _is_closed(status: str) -> bool:
     return any(flag in str(status or "") for flag in ("已完成", "已结束", "中标成功", "关闭", "取消"))
+
+
+def _display_text(value: Any) -> str:
+    """Convert an AI-table cell to readable text without summarising it."""
+    if value is None:
+        return ""
+    if isinstance(value, bool):
+        return "是" if value else "否"
+    if isinstance(value, (int, float, str)):
+        return str(value).strip()
+    if isinstance(value, list):
+        return "、".join(part for part in (_display_text(item) for item in value) if part)
+    if isinstance(value, dict):
+        for key in ("name", "text", "value", "label", "userName", "displayName"):
+            text = _display_text(value.get(key))
+            if text:
+                return text
+        return "、".join(
+            part for part in (_display_text(item) for item in value.values()) if part
+        )
+    return str(value).strip()
 
 
 def _tb_status_digest(value: Any, *, limit: int = 480) -> str:
@@ -305,6 +346,9 @@ class ReportService:
         calculated = self._content_hash(report_id)
         if calculated != str(report.get("contentHash") or ""):
             return False, "report content hash is stale; save a new revision"
+        issues = (report.get("sections") or {}).get("classificationIssues") or []
+        if issues:
+            return False, f"report has {len(issues)} unclassified item(s); complete product-manager department mapping"
         if require_approval and str(report.get("approvedContentHash") or "") != calculated:
             return False, "approval is not bound to the current report content"
         return True, ""
@@ -337,6 +381,33 @@ class ReportService:
 
     @staticmethod
     def _format_source(row: dict[str, Any]) -> dict[str, Any]:
+        raw = _json(row.get("raw_json"), {})
+        field_values = raw.get("fieldValues") if isinstance(raw, dict) else {}
+        field_values = field_values if isinstance(field_values, dict) else {}
+        spec = SOURCE_TABLE_BY_ID.get(str(row.get("table_id") or ""), {})
+        display_fields: dict[str, str] = {}
+        display_columns: list[dict[str, Any]] = []
+        for column in spec.get("displayFields") or []:
+            if not isinstance(column, dict):
+                continue
+            key = str(column.get("key") or "").strip()
+            if not key:
+                continue
+            fields = [str(name) for name in column.get("fields") or []]
+            value = ""
+            for field_name in fields:
+                value = _display_text(field_values.get(field_name))
+                if value:
+                    break
+            display_fields[key] = value
+            display_columns.append(
+                {
+                    "key": key,
+                    "label": str(column.get("label") or key),
+                    "weekly": bool(column.get("weekly")),
+                    "readOnly": bool(column.get("readOnly")),
+                }
+            )
         item = {
             "id": int(row.get("id") or 0),
             "tableId": str(row.get("table_id") or ""),
@@ -361,8 +432,71 @@ class ReportService:
             "dueAt": str(row.get("due_at") or ""),
             "sourceUpdatedAt": str(row.get("source_updated_at") or ""),
             "changedAt": str(row.get("changed_at") or ""),
+            "displayFields": display_fields,
+            "displayColumns": display_columns,
         }
+        # Historical/test rows may not carry raw field values.  Keep the
+        # template usable by filling semantic columns from normalized facts.
+        fallbacks = {
+            "item": item["title"], "object": item["title"], "project": item["title"],
+            "tender": item["title"], "status": item["status"],
+            "progress": item["progressText"], "content": item["progressText"],
+            "plan": item["planText"], "priority": item["priority"],
+            "date": item["eventAt"], "due": item["dueAt"],
+            "owner": "、".join(
+                dict.fromkeys(
+                    [*item["productManagerNames"], *item["projectManagerNames"]]
+                )
+            ),
+        }
+        for key, value in fallbacks.items():
+            if key in display_fields and not display_fields[key]:
+                display_fields[key] = str(value or "")
         return ReportService._hydrate_source(item)
+
+    def _product_manager_departments(self) -> dict[str, str]:
+        """Read the authoritative PM-to-department mapping from the roster table."""
+        if not ROSTER_TABLE_IDS:
+            return {}
+        placeholders = ",".join("?" for _ in ROSTER_TABLE_IDS)
+        rows = self.db.fetch_all(
+            f"SELECT * FROM source_record WHERE is_deleted=0 AND table_id IN ({placeholders})",
+            tuple(sorted(ROSTER_TABLE_IDS)),
+        )
+        result: dict[str, str] = {}
+        for row in rows:
+            raw = _json(row.get("raw_json"), {})
+            values = raw.get("fieldValues") if isinstance(raw, dict) else {}
+            values = values if isinstance(values, dict) else {}
+            department = _display_text(values.get("所属部门"))
+            user_ids = _json(row.get("product_manager_user_ids_json"), [])
+            for user_id in user_ids:
+                normalized = str(user_id or "").strip()
+                if normalized and department:
+                    result[normalized] = department
+        return result
+
+    @staticmethod
+    def _assign_business_board(item: dict[str, Any], departments: dict[str, str]) -> dict[str, Any]:
+        enriched = {**item}
+        product_manager_ids = [
+            str(value or "").strip() for value in item.get("productManagerUserIds") or []
+            if str(value or "").strip()
+        ]
+        department = next((departments.get(user_id, "") for user_id in product_manager_ids if departments.get(user_id)), "")
+        board = DEPARTMENT_BOARD_MAP.get(department, "")
+        enriched["businessBoard"] = board
+        enriched["businessBoardLabel"] = dict(BUSINESS_BOARDS).get(board, "待归类")
+        enriched["businessDepartment"] = department
+        if board:
+            enriched["classificationIssue"] = ""
+        elif not product_manager_ids:
+            enriched["classificationIssue"] = "未填写产品经理"
+        elif not department:
+            enriched["classificationIssue"] = "产品经理未在名单中配置所属部门"
+        else:
+            enriched["classificationIssue"] = f"所属部门“{department}”未配置板块映射"
+        return enriched
 
     @staticmethod
     def _hydrate_source(value: dict[str, Any]) -> dict[str, Any]:
@@ -482,10 +616,11 @@ class ReportService:
             if config.get("teambitionIncludeInReports")
             else {}
         )
+        departments = self._product_manager_departments()
         result: list[dict[str, Any]] = []
         for row in rows:
-            item = self._format_source(row)
-            if item["tableId"] == TEAMBITION_TABLE_ID:
+            item = self._assign_business_board(self._format_source(row), departments)
+            if item["tableId"] == TEAMBITION_TABLE_ID or item["tableId"] not in BUSINESS_TABLE_IDS:
                 continue
             if item["tableId"] == KEY_PROJECT_TABLE_ID:
                 item = self._merge_teambition_project(
@@ -519,9 +654,29 @@ class ReportService:
                 include_reasons.append("risk_open")
             if teambition_status_at and start_at <= teambition_status_at <= end_at:
                 include_reasons.append("teambition_project_status")
-            if not include_reasons:
+            team_included = bool(include_reasons)
+            if item["tableId"] == next(
+                str(source["tableId"]) for source in SOURCE_TABLES if source.get("key") == "tenders"
+            ) and not _is_closed(status):
+                include_reasons.append("active_tender")
+                team_included = True
+            is_visit = item["tableId"] == next(
+                str(source["tableId"]) for source in SOURCE_TABLES if source.get("key") == "visits"
+            )
+            personal_eligible = bool(
+                (is_visit and event_at and start_at <= event_at <= end_at)
+                or (not is_visit and not _is_closed(status))
+                or (item.get("categoryKey") == "support_todo" and updated_at and start_at <= updated_at <= end_at)
+            )
+            if not team_included and not personal_eligible:
                 continue
             item["includeReasons"] = include_reasons
+            item["teamIncluded"] = team_included
+            item["personalEligible"] = personal_eligible
+            item["updatedThisWeek"] = bool(
+                (updated_at and start_at <= updated_at <= end_at)
+                or (changed_at and start_at <= changed_at <= end_at)
+            )
             item["overdue"] = bool(due_at and due_at < now_local() and not _is_closed(status))
             result.append(item)
         return window, result
@@ -939,6 +1094,73 @@ class ReportService:
             "supportNeeds": _lines(support_lines),
         }
 
+    @staticmethod
+    def _draft_board_sections(items: list[dict[str, Any]]) -> dict[str, str]:
+        def line(item: dict[str, Any], *, include_plan: bool = False) -> str:
+            title = _compact(item.get("title") or "未命名事项", 48)
+            detail = _compact(item.get("progressText") or item.get("status") or "已纳入跟踪", 110)
+            if include_plan and item.get("planText"):
+                detail = f"{detail}；下一步：{_compact(item.get('planText'), 80)}"
+            return f"{title}：{detail}"
+
+        ranked = sorted(
+            items,
+            key=lambda item: (
+                not bool(item.get("riskText") or item.get("overdue")),
+                not (item.get("priority") in {"高", "紧急"}),
+                str(item.get("dueAt") or "9999"),
+            ),
+        )
+        visits = [item for item in items if item.get("categoryKey") == "customer_visit"]
+        risks = [item for item in items if item.get("riskText") or item.get("overdue")]
+        product = [
+            item for item in items
+            if item.get("categoryKey") in {"product_research", "product_management"}
+        ]
+        market = [item for item in items if item.get("categoryKey") == "market_tender"]
+        deliveries = [
+            item for item in items
+            if item.get("categoryKey") != "market_tender"
+            and re.search(r"出货|发货|备料|排产|交付|首单", str(item.get("progressText") or ""))
+        ]
+        milestones = [item for item in items if item.get("dueAt") or item.get("planText")]
+        visit_header = f"本周共 {len(visits)} 条拜访交流记录。" if visits else "本周无。"
+        market_header = f"在跟标 {len(market)} 个。" if market else "本周无在跟标案。"
+        return {
+            "weeklyHighlights": _lines([line(item, include_plan=True) for item in ranked[:4]], limit=4),
+            "visits": _lines([visit_header, *[line(item, include_plan=True) for item in visits]], limit=8),
+            "riskRadar": _lines([line(item, include_plan=True) for item in risks], limit=10),
+            "productManagement": _lines([line(item, include_plan=True) for item in product], limit=12),
+            "marketInfo": _lines(
+                [market_header, *[line(item, include_plan=True) for item in market],
+                 *[f"交付与出货：{line(item, include_plan=True)}" for item in deliveries]],
+                limit=14,
+            ),
+            "nextMilestones": _lines(
+                [
+                    f"{str(item.get('dueAt') or '').split('T')[0] or '日期待定'}："
+                    f"{_compact(item.get('title') or '未命名事项', 48)}"
+                    + (f"；{_compact(item.get('planText'), 90)}" if item.get("planText") else "")
+                    for item in sorted(milestones, key=lambda value: str(value.get("dueAt") or "9999"))
+                ],
+                limit=7,
+            ),
+        }
+
+    @staticmethod
+    def _board_payload(items: list[dict[str, Any]]) -> dict[str, Any]:
+        result: dict[str, Any] = {}
+        for board_key, label in BUSINESS_BOARDS:
+            board_items = [item for item in items if item.get("businessBoard") == board_key]
+            result[board_key] = {
+                "key": board_key,
+                "label": label,
+                "sections": ReportService._draft_board_sections(board_items),
+                "metrics": ReportService._metrics(board_items),
+                "sourceRecordIds": [str(item.get("recordId") or "") for item in board_items],
+            }
+        return result
+
     def generate(
         self,
         *,
@@ -1026,53 +1248,65 @@ class ReportService:
         use_ai: bool = True,
     ) -> dict[str, Any]:
         window, items = self.source_items(period_key=period_key, report_kind=report_kind)
-        metrics = self._metrics(items)
-        coverage = self._manager_coverage(window=window, items=items, report_kind=report_kind)
+        team_items = [item for item in items if item.get("teamIncluded", True)]
+        metrics = self._metrics(team_items)
+        coverage = self._manager_coverage(window=window, items=team_items, report_kind=report_kind)
         metrics["coverage"] = {
             "expectedCount": coverage["expectedCount"],
             "coveredCount": coverage["coveredCount"],
             "missingCount": coverage["missingCount"],
         }
         config = self.config_service.get()
-        fallback = self._draft_sections(items, metrics, report_kind=report_kind)
-        sections = fallback
+        fallback = self._draft_sections(team_items, metrics, report_kind=report_kind)
+        board_sections = self._board_payload(team_items)
+        metrics["byBoard"] = {
+            key: payload["metrics"] for key, payload in board_sections.items()
+        }
+        classification_issues = [
+            {
+                "tableId": str(item.get("tableId") or ""),
+                "recordId": str(item.get("recordId") or ""),
+                "title": str(item.get("title") or "未命名事项"),
+                "reason": str(item.get("classificationIssue") or "待归类"),
+            }
+            for item in team_items
+            if not item.get("businessBoard")
+        ]
+        sections = {
+            **fallback,
+            "boardSections": board_sections,
+            "classificationIssues": classification_issues,
+        }
         ai_status = "deterministic"
         ai_error = ""
         if use_ai:
-            try:
-                sections = self.ai_client.summarize(
-                    window={
-                        "periodKey": window["periodKey"],
-                        "label": window["label"],
-                        "startAt": to_db(window["startAt"]),
-                        "endAt": to_db(window["endAt"]),
-                    },
-                    metrics=metrics,
-                    items=items,
-                    fallback=fallback,
-                    project_baseline=config.get("projectBaseline") or [],
-                )
-                ai_category_digests = sections.pop("categoryDigests", {})
-                sections["categorySections"] = [
-                    {
-                        **category,
-                        "digest": _normalized_digest(
-                            ai_category_digests.get(str(category.get("key") or ""))
-                            or ai_category_digests.get(str(category.get("label") or ""))
-                        )
-                        if isinstance(ai_category_digests, dict)
-                        and (
-                            ai_category_digests.get(str(category.get("key") or ""))
-                            or ai_category_digests.get(str(category.get("label") or ""))
-                        )
-                        else category.get("digest"),
-                    }
-                    for category in fallback["categorySections"]
-                ]
-                ai_status = "success"
-            except AISummaryError as exc:
-                ai_status = "fallback"
-                ai_error = str(exc)[:2000]
+            failures: list[str] = []
+            successful = 0
+            for board_key, label in BUSINESS_BOARDS:
+                board_items = [item for item in team_items if item.get("businessBoard") == board_key]
+                try:
+                    summarizer = getattr(self.ai_client, "summarize_board", None)
+                    if not callable(summarizer):
+                        raise AISummaryError("AI client does not support board summaries")
+                    board_sections[board_key]["sections"] = summarizer(
+                        board_label=label,
+                        window={
+                            "periodKey": window["periodKey"],
+                            "label": window["label"],
+                            "startAt": to_db(window["startAt"]),
+                            "endAt": to_db(window["endAt"]),
+                        },
+                        metrics=board_sections[board_key]["metrics"],
+                        items=board_items,
+                        fallback=board_sections[board_key]["sections"],
+                        project_baseline=config.get("projectBaseline") or [],
+                    )
+                    successful += 1
+                except AISummaryError as exc:
+                    failures.append(f"{label}：{exc}")
+            sections["boardSections"] = board_sections
+            ai_status = "success" if successful == len(BUSINESS_BOARDS) else "fallback"
+            ai_error = "；".join(failures)[:2000]
         latest = self.db.fetch_one(
             "SELECT MAX(version) AS version FROM weekly_report WHERE period_key=? AND report_kind=?",
             (window["periodKey"], report_kind),
@@ -1138,6 +1372,7 @@ class ReportService:
             "title": str(row.get("title") or ""),
             "window": _json(row.get("window_json"), {}),
             "sections": _json(row.get("sections_json"), {}),
+            "classificationIssues": _json(row.get("sections_json"), {}).get("classificationIssues", []),
             "metrics": _json(row.get("metrics_json"), {}),
             "sourceRecordIds": _json(row.get("source_record_ids_json"), []),
             "coverage": _json(row.get("coverage_json"), {}),
@@ -1212,7 +1447,6 @@ class ReportService:
             "SELECT * FROM weekly_report_personal_edit WHERE report_id=? AND user_id=?",
             (int(report_id), normalized_user_id),
         ) or {}
-        category_digests = _json(edit_row.get("category_digests_json"), {})
         item_overrides = _json(edit_row.get("item_overrides_json"), {})
         personal_items: list[dict[str, Any]] = []
         display_name = str(name or "").strip()
@@ -1222,15 +1456,45 @@ class ReportService:
                 for entry in source.get("assignees") or []
                 if isinstance(entry, dict) and str(entry.get("userId") or "").strip() == normalized_user_id
             ]
-            if not roles:
+            if not roles or source.get("personalEligible") is False:
                 continue
             item = {**source, "roles": list(dict.fromkeys(roles))}
             item_key = str(item.get("recordId") or item.get("id") or "").strip()
             override = item_overrides.get(item_key) if item_key else None
+            source_display = {
+                str(key): str(value or "")
+                for key, value in (item.get("displayFields") or {}).items()
+            }
+            edited_fields: list[str] = []
             if isinstance(override, dict):
                 for key in PERSONAL_ITEM_EDIT_KEYS:
                     if key in override:
                         item[key] = str(override.get(key) or "").strip()
+                legacy_map = {
+                    "title": ("item", "object", "project", "tender"),
+                    "status": ("status",),
+                    "priority": ("priority",),
+                    "progressText": ("progress", "content"),
+                    "planText": ("plan",),
+                    "riskText": ("remark",),
+                }
+                for legacy_key, display_keys in legacy_map.items():
+                    if legacy_key not in override:
+                        continue
+                    target = next((key for key in display_keys if key in source_display), "")
+                    if target:
+                        source_display[target] = str(override.get(legacy_key) or "").strip()
+                        edited_fields.append(target)
+                display_override = override.get("displayFields")
+                if isinstance(display_override, dict):
+                    for key, value in display_override.items():
+                        normalized_key = str(key or "").strip()
+                        if normalized_key in source_display:
+                            source_display[normalized_key] = str(value or "").strip()[:12000]
+                            edited_fields.append(normalized_key)
+            item["sourceDisplayFields"] = dict(item.get("displayFields") or {})
+            item["displayFields"] = source_display
+            item["editedFields"] = list(dict.fromkeys(edited_fields))
             personal_items.append(item)
             if not display_name:
                 matched = next(
@@ -1251,17 +1515,79 @@ class ReportService:
             for role in item.get("roles") or []:
                 role_counts[role] = role_counts.get(role, 0) + 1
         metrics["byRole"] = role_counts
-        generated_summary = (
-            f"{display_name or normalized_user_id}本周共关联 {metrics['itemCount']} 项工作；"
-            f"风险 {metrics['riskCount']} 项、逾期 {metrics['overdueCount']} 项、"
-            f"高优先级 {metrics['highPriorityCount']} 项。"
-        )
-        summary = str(edit_row.get("summary") or "").strip() or generated_summary
+        summary = str(edit_row.get("summary") or "").strip()
         category_sections = self._category_sections(personal_items)
-        for section in category_sections:
-            key = str(section.get("key") or "")
-            if key in category_digests:
-                section["digest"] = str(category_digests.get(key) or "").strip()
+        legacy_category_digests = _json(edit_row.get("category_digests_json"), {})
+        if legacy_category_digests:
+            category_sections = [
+                {
+                    **section,
+                    **(
+                        {"digest": str(legacy_category_digests.get(section.get("key")) or "").strip()}
+                        if section.get("key") in legacy_category_digests
+                        else {}
+                    ),
+                }
+                for section in category_sections
+            ]
+        tables: list[dict[str, Any]] = []
+        table_specs = [
+            spec for spec in SOURCE_TABLES
+            if spec.get("displayFields") and not spec.get("roster") and not spec.get("archive")
+        ]
+        for spec in sorted(table_specs, key=lambda value: int(value.get("categoryOrder") or 999)):
+            table_items = [item for item in personal_items if item.get("tableId") == spec.get("tableId")]
+            columns = [
+                {
+                    "key": str(column.get("key") or ""),
+                    "label": str(column.get("label") or column.get("key") or ""),
+                    "weekly": bool(column.get("weekly")),
+                    "readOnly": bool(column.get("readOnly")),
+                }
+                for column in spec.get("displayFields") or []
+                if isinstance(column, dict)
+            ]
+            rows: list[dict[str, Any]] = []
+            for item in table_items:
+                values = dict(item.get("displayFields") or {})
+                source_values = dict(item.get("sourceDisplayFields") or values)
+                missing_weekly: list[str] = []
+                if not item.get("updatedThisWeek", True):
+                    for column in columns:
+                        if column.get("weekly") and column["key"] not in (item.get("editedFields") or []):
+                            values[column["key"]] = ""
+                            missing_weekly.append(column["key"])
+                rows.append(
+                    {
+                        "recordId": str(item.get("recordId") or item.get("id") or ""),
+                        "values": values,
+                        "sourceValues": source_values,
+                        "editedFields": item.get("editedFields") or [],
+                        "missingWeeklyFields": missing_weekly,
+                        "teambitionProject": item.get("teambitionProject") or None,
+                    }
+                )
+            tables.append(
+                {
+                    "key": str(spec.get("categoryKey") or spec.get("key") or ""),
+                    "tableId": str(spec.get("tableId") or ""),
+                    "label": str(spec.get("tableName") or spec.get("category") or "未分类"),
+                    "columns": columns,
+                    "rows": rows,
+                    "itemCount": len(rows),
+                }
+            )
+        missing_updates = [
+            str(item.get("title") or "未命名事项")
+            for item in personal_items
+            if not item.get("updatedThisWeek", True)
+            and any(column.get("weekly") for column in item.get("displayColumns") or [])
+        ]
+        overdue_items = [str(item.get("title") or "未命名事项") for item in personal_items if item.get("overdue")]
+        next_nodes = [
+            f"{str(item.get('dueAt') or '').split('T')[0]} {item.get('title') or '未命名事项'}"
+            for item in personal_items if item.get("dueAt")
+        ]
         return {
             "reportId": report["id"],
             "periodKey": report["periodKey"],
@@ -1273,6 +1599,14 @@ class ReportService:
             "metrics": metrics,
             "categorySections": category_sections,
             "items": personal_items,
+            "tables": tables,
+            "selfCheck": {
+                "itemCount": len(personal_items),
+                "byTable": {table["label"]: table["itemCount"] for table in tables},
+                "missingUpdates": missing_updates,
+                "overdueTodos": overdue_items,
+                "nextMilestones": next_nodes,
+            },
             "edit": {
                 "edited": bool(edit_row),
                 "updatedBy": str(edit_row.get("updated_by") or ""),
@@ -1332,16 +1666,35 @@ class ReportService:
             for key, value in (category_digests or {}).items()
             if str(key) in allowed_categories
         }
-        clean_items: dict[str, dict[str, str]] = {}
+        current_items = {
+            str(item.get("recordId") or item.get("id") or "").strip(): item
+            for item in current.get("items") or []
+        }
+        clean_items: dict[str, dict[str, Any]] = {}
         for item_key, raw_override in (item_overrides or {}).items():
             normalized_key = str(item_key or "").strip()
             if normalized_key not in allowed_items or not isinstance(raw_override, dict):
                 continue
-            clean_items[normalized_key] = {
+            clean_override: dict[str, Any] = {
                 key: str(raw_override.get(key) or "").strip()[:12000]
                 for key in PERSONAL_ITEM_EDIT_KEYS
                 if key in raw_override
             }
+            raw_display = raw_override.get("displayFields")
+            current_item = current_items.get(normalized_key) or {}
+            read_only_display = {
+                str(column.get("key") or "")
+                for column in current_item.get("displayColumns") or []
+                if isinstance(column, dict) and column.get("readOnly")
+            }
+            allowed_display = set(current_item.get("displayFields") or {}) - read_only_display
+            if isinstance(raw_display, dict):
+                clean_override["displayFields"] = {
+                    str(key): str(value or "").strip()[:12000]
+                    for key, value in raw_display.items()
+                    if str(key) in allowed_display
+                }
+            clean_items[normalized_key] = clean_override
         timestamp = to_db(now_local())
         with self.db.transaction() as connection:
             connection.execute(
@@ -1383,6 +1736,8 @@ class ReportService:
         report = self.get(report_id, include_sources=True)
         members: dict[str, dict[str, Any]] = {}
         for source in report.get("sources") or []:
+            if source.get("personalEligible") is False:
+                continue
             source_members: set[str] = set()
             for entry in source.get("assignees") or []:
                 if not isinstance(entry, dict):
@@ -1512,6 +1867,28 @@ class ReportService:
         for key in EDITABLE_SECTION_KEYS:
             if key in sections:
                 merged[key] = str(sections.get(key) or "").strip()[:20000]
+        incoming_boards = sections.get("boardSections")
+        if isinstance(incoming_boards, dict):
+            current_boards = merged.get("boardSections") if isinstance(merged.get("boardSections"), dict) else {}
+            for board_key, label in BUSINESS_BOARDS:
+                incoming = incoming_boards.get(board_key)
+                if not isinstance(incoming, dict):
+                    continue
+                incoming_values = incoming.get("sections") if isinstance(incoming.get("sections"), dict) else incoming
+                current = current_boards.get(board_key) if isinstance(current_boards.get(board_key), dict) else {
+                    "key": board_key, "label": label, "sections": {}
+                }
+                current_sections = current.get("sections") if isinstance(current.get("sections"), dict) else {}
+                current["sections"] = {
+                    **current_sections,
+                    **{
+                        key: str(incoming_values.get(key) or "").strip()[:20000]
+                        for key in BOARD_SECTION_KEYS
+                        if key in incoming_values
+                    },
+                }
+                current_boards[board_key] = current
+            merged["boardSections"] = current_boards
         incoming_categories = sections.get("categorySections")
         if isinstance(incoming_categories, list):
             edits = {
@@ -1578,16 +1955,42 @@ class ReportService:
                     item["productManagerNames"] = [entry["name"] for entry in product]
                     item["projectManagerUserIds"] = [entry["userId"] for entry in project]
                     item["projectManagerNames"] = [entry["name"] for entry in project]
-        snapshot = [self._hydrate_source(item) for item in snapshot]
-        metrics = self._metrics(snapshot)
+        departments = self._product_manager_departments()
+        snapshot = [
+            self._assign_business_board(self._hydrate_source(item), departments)
+            for item in snapshot
+        ]
+        team_snapshot = [item for item in snapshot if item.get("teamIncluded", True)]
+        metrics = self._metrics(team_snapshot)
         coverage = self._manager_coverage(
-            window=report["window"], items=snapshot, report_kind=report["reportKind"]
+            window=report["window"], items=team_snapshot, report_kind=report["reportKind"]
         )
         metrics["coverage"] = {
             "expectedCount": coverage["expectedCount"],
             "coveredCount": coverage["coveredCount"],
             "missingCount": coverage["missingCount"],
         }
+        rebuilt_boards = self._board_payload(team_snapshot)
+        saved_boards = merged.get("boardSections") if isinstance(merged.get("boardSections"), dict) else {}
+        for board_key, _ in BUSINESS_BOARDS:
+            saved = saved_boards.get(board_key) if isinstance(saved_boards.get(board_key), dict) else {}
+            saved_sections = saved.get("sections") if isinstance(saved.get("sections"), dict) else {}
+            if saved_sections:
+                rebuilt_boards[board_key]["sections"] = {
+                    **rebuilt_boards[board_key]["sections"], **saved_sections
+                }
+        merged["boardSections"] = rebuilt_boards
+        merged["classificationIssues"] = [
+            {
+                "tableId": str(item.get("tableId") or ""),
+                "recordId": str(item.get("recordId") or ""),
+                "title": str(item.get("title") or "未命名事项"),
+                "reason": str(item.get("classificationIssue") or "待归类"),
+            }
+            for item in team_snapshot
+            if not item.get("businessBoard")
+        ]
+        metrics["byBoard"] = {key: value["metrics"] for key, value in rebuilt_boards.items()}
         saved_digests = {
             str(item.get("key") or ""): str(item.get("digest") or "")
             for item in merged.get("categorySections") or []

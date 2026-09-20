@@ -268,11 +268,12 @@ class SchedulerSecurityAndWebTests(unittest.TestCase):
 
         reports = Reports()
         delivery = Delivery()
+        renderer = Renderer(reports)
         scheduler = SchedulerService(
             database=self.db,
             config_service=Config(),
             reports=reports,
-            renderer=Renderer(reports),
+            renderer=renderer,
             delivery=delivery,
         )
         scheduler._source_snapshot_ready = lambda *_args, **_kwargs: (True, "")
@@ -298,6 +299,7 @@ class SchedulerSecurityAndWebTests(unittest.TestCase):
         self.assertEqual("success", completed["status"])
         self.assertEqual("", completed["error_text"])
         self.assertEqual([8], delivery.formal_calls)
+        self.assertEqual([], renderer.calls)
 
     def test_send_claim_is_atomic_and_blocks_an_inflight_duplicate(self) -> None:
         delivery = DeliveryService(database=self.db)
@@ -463,11 +465,12 @@ class SchedulerSecurityAndWebTests(unittest.TestCase):
         self.assertIn('api("/api/config"', script)
         self.assertIn('api("/api/model-config"', script)
         self.assertIn('api("/api/model-config/test"', script)
-        self.assertIn("styles.css?v=20260901a", html)
-        self.assertIn("app.js?v=20260911a", html)
+        self.assertIn("styles.css?v=20260920a", html)
+        self.assertIn("app.js?v=20260920a", html)
         self.assertIn('data-route="personal-reports"', html)
         self.assertIn('data-page="personal-reports"', html)
-        self.assertIn('id="personalCharts"', html)
+        self.assertIn('id="personalTables"', html)
+        self.assertIn('id="personalSelfCheck"', html)
         self.assertIn('id="personalMemberSearch"', html)
         self.assertIn("personal-external-link", script)
         self.assertIn("personal-edit-button", script)

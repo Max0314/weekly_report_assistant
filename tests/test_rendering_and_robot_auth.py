@@ -13,6 +13,44 @@ from app.services.workflow_config import WorkflowConfigService
 
 
 class RenderingAndAuthTests(unittest.TestCase):
+    def test_board_report_defaults_to_domestic_and_keeps_views_isolated(self) -> None:
+        report = {
+            "id": 9,
+            "title": "双板块周报",
+            "version": 2,
+            "window": {"label": "本周"},
+            "metrics": {},
+            "sections": {
+                "boardSections": {
+                    "domestic": {
+                        "sections": {"weeklyHighlights": "国内事项 <一>"},
+                        "metrics": {"itemCount": 1},
+                    },
+                    "overseas_iot": {
+                        "sections": {"weeklyHighlights": "海外事项 <二>"},
+                        "metrics": {"itemCount": 1},
+                    },
+                }
+            },
+            "sources": [
+                {"title": "国内事实", "businessBoard": "domestic", "teamIncluded": True},
+                {"title": "海外事实", "businessBoard": "overseas_iot", "teamIncluded": True},
+            ],
+        }
+
+        output = report_html(report)
+
+        self.assertIn('data-board-button="domestic" class="active"', output)
+        self.assertIn('data-board-button="overseas_iot"', output)
+        self.assertIn('data-board-pane="domestic" >', output)
+        self.assertIn('data-board-pane="overseas_iot" hidden>', output)
+        self.assertIn('location.hash==="#overseas-iot"', output)
+        self.assertIn("国内事项 &lt;一&gt;", output)
+        self.assertIn("海外事项 &lt;二&gt;", output)
+        domestic = output[output.index('data-board-pane="domestic"'):output.index('data-board-pane="overseas_iot"')]
+        self.assertIn("国内事实", domestic)
+        self.assertNotIn("海外事实", domestic)
+
     def test_personal_report_card_url_uses_click_safe_redirect(self) -> None:
         renderer = ReportRenderer(
             config=SimpleNamespace(

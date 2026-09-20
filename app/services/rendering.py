@@ -93,6 +93,90 @@ def report_html(
         for section in category_sections
         if isinstance(section, dict)
     )
+    board_sections = sections.get("boardSections") if isinstance(sections.get("boardSections"), dict) else {}
+    board_labels = (("domestic", "国内"), ("overseas_iot", "海外 + 物联网"))
+
+    def board_pane(board_key: str, board_label: str) -> str:
+        payload = board_sections.get(board_key) if isinstance(board_sections.get(board_key), dict) else {}
+        board_values = payload.get("sections") if isinstance(payload.get("sections"), dict) else {}
+        board_metrics = payload.get("metrics") if isinstance(payload.get("metrics"), dict) else {}
+        board_sources = [item for item in sources if item.get("businessBoard") == board_key and item.get("teamIncluded", True)]
+        board_rows = "".join(
+            '<tr class="fact-row">'
+            f'<td class="fact-category" data-label="类别">{html.escape(str(item.get("category") or "-"))}</td>'
+            f'<td class="fact-title" data-label="事项">{html.escape(str(item.get("title") or "-"))}</td>'
+            f'<td class="fact-status" data-label="状态">{html.escape(str(item.get("status") or "-"))}</td>'
+            f'<td data-label="负责人">{html.escape("、".join(dict.fromkeys(str(entry.get("name") or entry.get("userId") or "") for entry in item.get("assignees") or [] if isinstance(entry, dict))) or "-")}</td>'
+            f'<td data-label="截止">{html.escape(str(item.get("dueAt") or "-").split("T")[0])}</td>'
+            '</tr>'
+            for item in board_sources
+        )
+        cards = (
+            ("一、本周要事", "weeklyHighlights", ""),
+            ("二、拜访交流", "visits", ""),
+            ("三、风险雷达", "riskRadar", "risk"),
+            ("四、产品策划&管理", "productManagement", ""),
+            ("五、市场信息", "marketInfo", ""),
+            ("六、下周关键节点", "nextMilestones", ""),
+        )
+        return (
+            f'<section class="board-pane" data-board-pane="{board_key}" '
+            f'{"" if board_key == "domestic" else "hidden"}>'
+            f'<div class="board-title"><span>{html.escape(board_label)}</span><strong>{int(board_metrics.get("itemCount") or 0)} 项</strong></div>'
+            '<section class="stats board-stats">'
+            f'<div class="stat"><span>纳入事项</span><strong>{int(board_metrics.get("itemCount") or 0)}</strong></div>'
+            f'<div class="stat"><span>涉及负责人</span><strong>{int(board_metrics.get("managerCount") or 0)}</strong></div>'
+            f'<div class="stat"><span>风险事项</span><strong>{int(board_metrics.get("riskCount") or 0)}</strong></div>'
+            f'<div class="stat"><span>逾期事项</span><strong>{int(board_metrics.get("overdueCount") or 0)}</strong></div>'
+            f'<div class="stat"><span>高优先级</span><strong>{int(board_metrics.get("highPriorityCount") or 0)}</strong></div>'
+            '</section>'
+            '<section class="board-grid">'
+            + ''.join(
+                f'<article class="card board-card {tone}"><h2>{title}</h2>{_section_html(board_values.get(key))}</article>'
+                for title, key, tone in cards
+            )
+            + '</section>'
+            '<details class="card table-card fact-details"><summary><h2>本板块事实清单</h2><span aria-hidden="true"></span></summary>'
+            '<div class="fact-table-wrap"><table><thead><tr><th>类别</th><th>事项</th><th>状态</th><th>负责人</th><th>截止</th></tr></thead>'
+            f'<tbody>{board_rows or "<tr><td colspan=\"5\" class=\"empty\">本周无</td></tr>"}</tbody></table></div></details>'
+            '</section>'
+        )
+
+    has_boards = bool(board_sections)
+    classification_issues = sections.get("classificationIssues") or report.get("classificationIssues") or []
+    classification_warning = (
+        '<aside class="classification-warning"><strong>存在待归类事项</strong>'
+        f'<span>共 {len(classification_issues)} 条，最终版与正式发送已阻断；请补全产品经理名单中的所属部门。</span></aside>'
+        if classification_issues else ''
+    )
+    board_switch = (
+        '<nav class="board-switch" aria-label="业务板块">'
+        + ''.join(
+            f'<button type="button" data-board-button="{key}" class="{"active" if key == "domestic" else ""}" aria-pressed="{"true" if key == "domestic" else "false"}">{html.escape(label)}</button>'
+            for key, label in board_labels
+        )
+        + '</nav>'
+        if has_boards else ''
+    )
+    board_content = ''.join(board_pane(key, label) for key, label in board_labels) if has_boards else ''
+    legacy_content = f"""
+<section class="stats">
+<div class="stat"><span>纳入事项</span><strong>{int(metrics.get('itemCount') or 0)}</strong></div>
+<div class="stat"><span>涉及负责人</span><strong>{int(metrics.get('managerCount') or 0)}</strong></div>
+<div class="stat"><span>风险事项</span><strong>{int(metrics.get('riskCount') or 0)}</strong></div>
+<div class="stat"><span>逾期事项</span><strong>{int(metrics.get('overdueCount') or 0)}</strong></div>
+<div class="stat"><span>高优先级</span><strong>{int(metrics.get('highPriorityCount') or 0)}</strong></div>
+</section>
+<section class="lead">{_summary_html(sections.get('executiveSummary'))}</section>
+<section class="metrics">{category_cards}</section>
+<section class="category-grid">{category_section_cards or '<article class="card"><p class="empty">本周期暂无分类事项</p></article>'}</section>
+<section class="grid">
+<article class="card risk"><h2>风险与待跟进</h2>{_section_html(sections.get('risks'))}</article>
+<article class="card"><h2>下周计划</h2>{_section_html(sections.get('nextPlans'))}</article>
+<article class="card"><h2>需协调与支持</h2>{_section_html(sections.get('supportNeeds'))}</article>
+</section>
+<details class="card table-card fact-details"><summary><h2>本周事实清单</h2><span aria-hidden="true"></span></summary><div class="fact-table-wrap"><table><thead><tr><th>类别</th><th>事项</th><th>状态</th><th>负责人</th><th>截止</th></tr></thead><tbody>{source_rows or '<tr><td colspan="5" class="empty">暂无</td></tr>'}</tbody></table></div></details>
+"""
     personal_action = (
         f'<a class="personal-open" href="{html.escape(personal_report_url, quote=True)}">'
         '查看个人周报</a>'
@@ -111,10 +195,20 @@ def report_html(
         'aria-label="在外部浏览器打开周报">↗ 外部打开</a></div>'
         if interactive else ""
     )
-    interactive_script = (
-        '<script>document.getElementById("externalOpen").href=window.location.href;</script>'
-        if interactive else ""
-    )
+    interactive_script = f'''<script>
+(function(){{
+  var external=document.getElementById("externalOpen"); if(external) external.href=window.location.href;
+  var buttons=[].slice.call(document.querySelectorAll("[data-board-button]"));
+  function selectBoard(key, updateHash){{
+    if(!document.querySelector('[data-board-pane="'+key+'"]')) key="domestic";
+    buttons.forEach(function(button){{var active=button.dataset.boardButton===key;button.classList.toggle("active",active);button.setAttribute("aria-pressed",active?"true":"false");}});
+    document.querySelectorAll("[data-board-pane]").forEach(function(pane){{pane.hidden=pane.dataset.boardPane!==key;}});
+    if(updateHash) history.replaceState(null,"",key==="domestic"?location.pathname+location.search:location.pathname+location.search+"#overseas-iot");
+  }}
+  buttons.forEach(function(button){{button.addEventListener("click",function(){{selectBoard(button.dataset.boardButton,true);}});}});
+  selectBoard(location.hash==="#overseas-iot"?"overseas_iot":"domestic",false);
+}})();
+</script>'''
     return f"""<!doctype html>
 <html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>{html.escape(str(report.get('title') or '周报'))}</title>
@@ -132,6 +226,15 @@ def report_html(
 .external-open{{background:#fff;color:#17517a;box-shadow:0 5px 14px rgba(0,0,0,.12)}}
 .personal-open:hover,.edit-open:hover{{background:rgba(255,255,255,.22)}}
 .external-open:hover{{background:#eff8ff}}
+.board-switch{{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin:20px 0 4px;padding:7px;border:1px solid #cbd9e8;border-radius:18px;background:#dfe9f4;position:sticky;top:8px;z-index:5;box-shadow:0 10px 30px rgba(23,59,104,.12)}}
+.classification-warning{{display:flex;align-items:center;justify-content:space-between;gap:16px;margin:20px 0 0;padding:14px 18px;color:#8b4a13;border:1px solid #efcf9c;border-radius:14px;background:#fff7e8;font-size:14px}}
+.classification-warning strong{{white-space:nowrap}}
+.board-switch button{{border:0;border-radius:13px;padding:14px 18px;background:transparent;color:#31506f;font-size:17px;font-weight:800;cursor:pointer}}
+.board-switch button.active{{background:#173b68;color:#fff;box-shadow:0 7px 18px rgba(23,59,104,.25)}}
+.board-pane[hidden]{{display:none}} .board-title{{display:flex;align-items:center;justify-content:space-between;margin:24px 2px 0;color:#173b68}}
+.board-title span{{font-size:25px;font-weight:900}} .board-title strong{{font-size:14px;padding:7px 11px;border-radius:999px;background:#e7f0f8}}
+.board-grid{{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:20px;margin-top:24px;align-items:start}}
+.board-card:nth-child(1),.board-card:nth-child(6){{grid-column:1/-1}}
 .stats{{display:grid;grid-template-columns:repeat(5,1fr);gap:16px;margin:24px 0}}
 .stat,.metric,.card{{background:#fff;border:1px solid #dce5ef;border-radius:18px;box-shadow:0 8px 24px rgba(23,59,104,.06)}}
 .stat{{padding:20px}} .stat span,.metric span{{display:block;color:#5d6c80;font-size:15px}} .stat strong{{font-size:34px;color:#173b68}}
@@ -175,6 +278,8 @@ th:nth-child(1){{width:18%}} th:nth-child(3){{width:11%}} th:nth-child(4){{width
   .metric{{padding:12px;border-radius:14px}} .metric span{{font-size:12px;line-height:1.35}} .metric strong{{font-size:21px}}
   .grid{{grid-template-columns:1fr;gap:12px;margin-top:14px}} .grid .card:last-child{{grid-column:auto}}
   .category-grid{{grid-template-columns:1fr;gap:12px;margin-top:14px}}
+  .board-grid{{grid-template-columns:1fr;gap:12px;margin-top:14px}} .board-card:nth-child(1),.board-card:nth-child(6){{grid-column:auto}}
+  .board-switch{{top:4px;margin-top:12px}} .board-switch button{{padding:11px 8px;font-size:14px}}
   .card{{padding:18px;border-radius:15px}} .card h2{{font-size:20px;margin-bottom:12px}}
   .section-list li{{grid-template-columns:24px minmax(0,1fr);gap:8px;font-size:15.5px;line-height:1.7;margin:10px 0}}
   .section-list li::before{{width:21px;height:21px;margin-top:3px;font-size:11px}}
@@ -196,22 +301,9 @@ th:nth-child(1){{width:18%}} th:nth-child(3){{width:11%}} th:nth-child(4){{width
 }}
 </style></head><body><main class="page">
 <section class="hero"><div class="hero-heading"><div><h1>{html.escape(str(report.get('title') or '产品与项目管理周报'))}</h1><p>{html.escape(str(window.get('label') or report.get('periodKey') or ''))} · v{int(report.get('version') or 0)}</p></div>{interactive_actions}</div></section>
-<section class="stats">
-<div class="stat"><span>纳入事项</span><strong>{int(metrics.get('itemCount') or 0)}</strong></div>
-<div class="stat"><span>涉及负责人</span><strong>{int(metrics.get('managerCount') or 0)}</strong></div>
-<div class="stat"><span>风险事项</span><strong>{int(metrics.get('riskCount') or 0)}</strong></div>
-<div class="stat"><span>逾期事项</span><strong>{int(metrics.get('overdueCount') or 0)}</strong></div>
-<div class="stat"><span>高优先级</span><strong>{int(metrics.get('highPriorityCount') or 0)}</strong></div>
-</section>
-<section class="lead">{_summary_html(sections.get('executiveSummary'))}</section>
-<section class="metrics">{category_cards}</section>
-<section class="category-grid">{category_section_cards or '<article class="card"><p class="empty">本周期暂无分类事项</p></article>'}</section>
-<section class="grid">
-<article class="card risk"><h2>风险与待跟进</h2>{_section_html(sections.get('risks'))}</article>
-<article class="card"><h2>下周计划</h2>{_section_html(sections.get('nextPlans'))}</article>
-<article class="card"><h2>需协调与支持</h2>{_section_html(sections.get('supportNeeds'))}</article>
-</section>
-<details class="card table-card fact-details"><summary><h2>本周事实清单</h2><span aria-hidden="true"></span></summary><div class="fact-table-wrap"><table><thead><tr><th>类别</th><th>事项</th><th>状态</th><th>负责人</th><th>截止</th></tr></thead><tbody>{source_rows or '<tr><td colspan="5" class="empty">暂无</td></tr>'}</tbody></table></div></details>
+{board_switch}
+{classification_warning}
+{board_content if has_boards else legacy_content}
 <div class="foot">由周报助手根据 AI 多维表快照生成；统计数字由程序计算，AI 仅用于归纳文案。</div>
 </main>{interactive_script}</body></html>"""
 

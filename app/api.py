@@ -282,7 +282,7 @@ def readiness(_: str = Depends(_admin_token)) -> dict[str, Any]:
             and delivery_ready
             and archive_ready
             and (teambition_ready or not teambition_required)
-            and (public_links or not config.get("sendGroupImages"))
+            and public_links
         ),
         "checks": {
             "dingtalkApp": settings.dingtalk_configured,
@@ -666,6 +666,9 @@ def get_personal_report(
             user_id=target_user_id,
             name=str(person.get("employee_name") or (identity.name if target_user_id == identity.user_id else "")),
         )
+        if isinstance(result.get("person"), dict):
+            result["person"]["department"] = str(person.get("department_name") or "")
+            result["person"]["title"] = str(person.get("title") or "")
         result["resolvedFromReportId"] = report_id if resolved_report_id != report_id else 0
         result["canEdit"] = (
             result.get("workflowState") not in NON_EDITABLE_STATES
@@ -687,6 +690,7 @@ def update_personal_report(
     if target_user_id != identity.user_id and not full_scope:
         raise HTTPException(status_code=403, detail="无权编辑该成员的个人周报")
     try:
+        person = directory_service.lookup_by_user_id().get(target_user_id, {})
         result = report_service.update_personal(
             report_id,
             user_id=target_user_id,
@@ -695,6 +699,9 @@ def update_personal_report(
             item_overrides=body.itemOverrides,
             actor=identity.actor,
         )
+        if isinstance(result.get("person"), dict):
+            result["person"]["department"] = str(person.get("department_name") or "")
+            result["person"]["title"] = str(person.get("title") or "")
         result["canEdit"] = result.get("workflowState") not in NON_EDITABLE_STATES
         return result
     except Exception as exc:
@@ -837,9 +844,6 @@ def render_report(report_id: int, _: str = Depends(_admin_token)) -> dict[str, A
 @router.post("/api/reports/{report_id}/preview")
 def preview_report(report_id: int, _: str = Depends(_admin_token)) -> dict[str, Any]:
     try:
-        report = report_service.get(report_id)
-        if not report.get("imageReady"):
-            report_renderer.render(report_id)
         return delivery_service.preview(report_id)
     except Exception as exc:
         _raise_api_error(exc)
@@ -852,9 +856,6 @@ def test_push_report(
     _: str = Depends(_admin_token),
 ) -> dict[str, Any]:
     try:
-        report = report_service.get(report_id)
-        if not report.get("imageReady"):
-            report_renderer.render(report_id)
         return delivery_service.test_push(report_id, release_key=body.releaseKey)
     except Exception as exc:
         _raise_api_error(exc)
@@ -871,9 +872,6 @@ def approve_report(report_id: int, actor: str = Depends(_admin_token)) -> dict[s
 @router.post("/api/reports/{report_id}/formal-send")
 def formal_send(report_id: int, _: str = Depends(_admin_token)) -> dict[str, Any]:
     try:
-        report = report_service.get(report_id)
-        if not report.get("imageReady"):
-            report_renderer.render(report_id)
         return delivery_service.formal(report_id)
     except Exception as exc:
         _raise_api_error(exc)

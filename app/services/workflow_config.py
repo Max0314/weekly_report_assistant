@@ -121,10 +121,12 @@ def normalize_config(raw: dict[str, Any] | None) -> dict[str, Any]:
         "autoGenerateEnabled",
         "autoPreviewEnabled",
         "enforceDirectoryForFormalSend",
-        "sendGroupImages",
         "archiveWriteEnabled",
     ):
         config[key] = bool(config.get(key))
+    # Report delivery is link-only. Keep accepting the historical setting in
+    # stored JSON, but never let it re-enable image generation or delivery.
+    config["sendGroupImages"] = False
     # The production cadence is fixed: the latest combined report is sent on
     # Sunday at 20:00 without preview, confirmation, or approval gates.
     config["autoFormalSendEnabled"] = True

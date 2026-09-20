@@ -316,8 +316,6 @@ class SchedulerService:
                         report = self.reports.generate(
                             period_key=period_key, report_kind="combined", actor="scheduler"
                         )
-                    if not report.get("imageReady"):
-                        self.renderer.render(int(report["id"]))
                     outcome = self.delivery.test_push(
                         int(report["id"]), release_key=f"{period_key}-sat09"
                     )
@@ -335,8 +333,6 @@ class SchedulerService:
                     report = self.reports.latest(period_key=period_key, report_kind="combined")
                     if not report:
                         raise RuntimeError("latest combined report is unavailable for Saturday final delivery")
-                    if not report.get("imageReady"):
-                        self.renderer.render(int(report["id"]))
                     outcome = self.delivery.saturday_final(
                         int(report["id"]), schedule_key=f"{period_key}-sat17"
                     )
@@ -368,8 +364,6 @@ class SchedulerService:
                     current_report = self.reports.latest(period_key=period_key, report_kind="combined")
                     if not current_report or int(current_report["id"]) != int(report["id"]):
                         raise RuntimeError("latest combined report changed before formal delivery")
-                    if not current_report.get("imageReady"):
-                        self.renderer.render(int(current_report["id"]))
                     outcome = self.delivery.formal(int(current_report["id"]))
                     if not self._delivery_succeeded(outcome):
                         raise RuntimeError("Sunday formal delivery failed")

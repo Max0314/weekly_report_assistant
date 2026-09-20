@@ -12,6 +12,12 @@
     "executiveSummary", "productHighlights", "projectHighlights",
     "risks", "nextPlans", "supportNeeds",
   ];
+  const BOARD_SECTION_KEYS = [
+    ["weeklyHighlights", "一、本周要事"], ["visits", "二、拜访交流"],
+    ["riskRadar", "三、风险雷达"], ["productManagement", "四、产品策划&管理"],
+    ["marketInfo", "五、市场信息"], ["nextMilestones", "六、下周关键节点"],
+  ];
+  const BOARD_LABELS = {domestic: "国内", overseas_iot: "海外 + 物联网"};
   const ROUTES = {
     overview: {eyebrow: "WORKSPACE", title: "工作台概览", subtitle: "掌握数据、生成、审核与推送状态"},
     teambition: {eyebrow: "TEAM WORK EXECUTION", title: "TB 重点项目看板", subtitle: "仅展示多维表重点项目匹配到的任务与项目状态"},
@@ -52,6 +58,7 @@
   let reportLeaseTouchAt = 0;
   let reportOriginalEdit = "";
   let reportIsDirty = false;
+  let activeReportBoard = "domestic";
   let reportFilter = "current";
   let toastTimer = null;
   let accessConnected = false;
@@ -371,46 +378,38 @@
 
   const renderPersonalReport = (data) => {
     const person = data.person || {};
-    const metrics = data.metrics || {};
     const externalHref = personalReportHref(data.reportId, person.userId);
-    $("#personalHero").innerHTML = `<div><span>PERSONAL WEEKLY REPORT</span><h2>${escapeHtml(person.name || "个人周报")}</h2><p>${escapeHtml(data.window?.label || data.periodKey || "")} · 团队周报 v${data.version || 0}${data.edit?.edited ? ` · 已编辑 ${escapeHtml(String(data.edit.updatedAt || "").replace("T", " ").slice(0, 16))}` : ""}</p></div><div class="personal-hero-actions"><div class="personal-hero-tag">${escapeHtml(statusLabel(data.workflowState))}</div>${data.canEdit ? '<button class="personal-edit-button" data-personal-edit type="button">✎ 编辑个人周报</button>' : ""}<a class="personal-external-link" href="${escapeHtml(externalHref)}" target="_blank" rel="noopener noreferrer">外部打开 ↗</a></div>`;
-    const cards = [
-      ["关联事项", metrics.itemCount || 0, `涉及 ${Object.keys(metrics.byCategory || {}).length} 个分类`],
-      ["风险事项", metrics.riskCount || 0, "按事实状态识别"],
-      ["逾期事项", metrics.overdueCount || 0, "未关闭且已过截止"],
-      ["高优先级", metrics.highPriorityCount || 0, "高或紧急"],
-      ["承担角色", Object.keys(metrics.byRole || {}).length, Object.entries(metrics.byRole || {}).map(([role, count]) => `${role} ${count}`).join(" · ") || "暂无归属"],
-    ];
-    $("#personalStats").innerHTML = cards.map(([label, value, detail]) => `<article class="metric-card"><span>${escapeHtml(label)}</span><strong>${escapeHtml(value)}</strong><small>${escapeHtml(detail)}</small></article>`).join("");
-    const categories = Object.entries(metrics.byCategory || {}).sort((a, b) => Number(b[1]) - Number(a[1])).slice(0, 6);
-    const categoryMax = Math.max(1, ...categories.map(([, count]) => Number(count || 0)));
-    $("#personalCharts").innerHTML = `
-      <article class="panel personal-chart-card">
-        <div class="personal-chart-head"><div><p class="eyebrow">DISTRIBUTION</p><h3>工作分类分布</h3></div><span>${categories.length} 类</span></div>
-        <div class="personal-bar-list">${categories.length ? categories.map(([label, count]) => `<div class="personal-bar-row"><span>${escapeHtml(label)}</span><div><i style="width:${Math.max(6, Math.round((Number(count || 0) / categoryMax) * 100))}%"></i></div><strong>${Number(count || 0)}</strong></div>`).join("") : '<p class="muted">本周期暂无分类数据。</p>'}</div>
-      </article>`;
+    const identityLine = [person.department, person.title].filter(Boolean).join(" · ");
+    $("#personalHero").innerHTML = `<div><span>PERSONAL WEEKLY REPORT</span><h2>${escapeHtml(person.name || "个人周报")}</h2><p>${escapeHtml(identityLine)}${identityLine ? " · " : ""}${escapeHtml(data.window?.label || data.periodKey || "")} · 团队周报 v${data.version || 0}${data.edit?.edited ? ` · 已编辑 ${escapeHtml(String(data.edit.updatedAt || "").replace("T", " ").slice(0, 16))}` : ""}</p></div><div class="personal-hero-actions"><div class="personal-hero-tag">${escapeHtml(statusLabel(data.workflowState))}</div>${data.canEdit ? '<button class="personal-edit-button" data-personal-edit type="button">✎ 编辑个人周报</button>' : ""}<a class="personal-external-link" href="${escapeHtml(externalHref)}" target="_blank" rel="noopener noreferrer">外部打开 ↗</a></div>`;
     $("#personalSummary").textContent = data.summary || "本周期暂无归属事实。";
-    const items = data.items || [];
-    $("#personalCategories").innerHTML = (data.categorySections || []).length ? data.categorySections.map((section) => {
-      const categoryItems = items.filter((item) => String(item.categoryKey || item.tableId) === String(section.key));
-      const subtypeChips = Object.entries(section.bySubcategory || {}).map(([name, count]) => `<span>${escapeHtml(name)} ${count}</span>`).join("");
-      const categorySummary = section.digest ? `<div class="personal-category-summary">${sectionLines(section.digest).map((line) => `<p>${escapeHtml(line)}</p>`).join("")}</div>` : "";
-      return `<section class="panel personal-category"><div class="personal-category-head"><div><p class="eyebrow">${String(section.order || "").padStart(2, "0")}</p><h2>${escapeHtml(section.label || "未分类")}</h2></div><div class="personal-category-count"><strong>${section.itemCount || 0}</strong><span>项工作</span></div></div>${categorySummary}${subtypeChips ? `<div class="personal-subtypes">${subtypeChips}</div>` : ""}<div class="personal-item-list">${categoryItems.map((item) => {
-        const tbProject = item.teambitionProject || null;
-        const tags = [...(item.roles || []), item.subcategory, item.status || "未标记", item.priority ? `${item.priority}优先级` : "", tbProject?.statusName ? `TB · ${tbProject.statusName}` : ""].filter(Boolean);
-        const dates = [item.eventAt ? `业务日期 ${String(item.eventAt).split("T")[0]}` : "", item.dueAt ? `截止 ${String(item.dueAt).split("T")[0]}` : ""].filter(Boolean).join(" · ");
-        const tbMeta = tbProject ? [tbProject.statusName, tbProject.statusDegreeLabel, tbProject.progressPercent != null ? `进度 ${tbProject.progressPercent}%` : "", tbProject.statusCreatedAt ? `更新 ${String(tbProject.statusCreatedAt).split("T")[0]}` : ""].filter(Boolean).join(" · ") : "";
-        const tbDetails = tbProject ? `<details class="personal-tb-status"><summary><span><strong>TB 项目状态</strong><small>${escapeHtml(tbMeta || "已关联重点项目")}</small></span><em>${tbProject.statusContent ? "查看详情" : "暂无状态正文"}</em></summary>${tbProject.statusContent ? `<div>${escapeMultiline(tbProject.statusContent)}</div>` : ""}</details>` : "";
-        return `<article class="personal-item"><div class="personal-item-title"><h3>${escapeHtml(item.title || "未命名事项")}</h3><div>${tags.map((tag) => `<span>${escapeHtml(tag)}</span>`).join("")}</div></div>${item.progressText ? `<p><strong>本周进展</strong>${escapeHtml(item.progressText)}</p>` : ""}${item.planText ? `<p><strong>下周计划</strong>${escapeHtml(item.planText)}</p>` : ""}${item.riskText ? `<p class="personal-risk"><strong>风险提示</strong>${escapeHtml(item.riskText)}</p>` : ""}${tbDetails}${dates ? `<small>${escapeHtml(dates)}</small>` : ""}</article>`;
-      }).join("")}</div></section>`;
-    }).join("") : '<div class="empty-state"><strong>本周期暂无个人事项</strong><p>团队周报已生成，但没有匹配到该成员的责任人字段。</p></div>';
+    $("#personalSupplementPanel").hidden = !data.summary;
+    const tables = data.tables || [];
+    $("#personalTables").innerHTML = tables.map((table, index) => {
+      const headers = (table.columns || []).map((column) => `<th>${escapeHtml(column.label)}</th>`).join("");
+      const rows = (table.rows || []).length ? table.rows.map((row) => `<tr>${(table.columns || []).map((column) => {
+        const value = row.values?.[column.key] || "";
+        const missing = (row.missingWeeklyFields || []).includes(column.key);
+        const edited = (row.editedFields || []).includes(column.key);
+        return `<td data-label="${escapeHtml(column.label)}">${value ? escapeMultiline(value) : (missing ? '<span class="personal-unupdated">未更新</span>' : "—")}${edited ? '<em class="personal-edited">本地修改</em>' : ""}</td>`;
+      }).join("")}</tr>`).join("") : `<tr><td colspan="${Math.max(1, (table.columns || []).length)}">本周无</td></tr>`;
+      return `<section class="panel personal-table-section"><div class="personal-category-head"><div><p class="eyebrow">${String(index + 1).padStart(2, "0")}</p><h2>${escapeHtml(table.label)}</h2></div><div class="personal-category-count"><strong>${table.itemCount || 0}</strong><span>条</span></div></div><div class="personal-table-wrap"><table><thead><tr>${headers}</tr></thead><tbody>${rows}</tbody></table></div></section>`;
+    }).join("") || '<div class="empty-state"><strong>本周期暂无个人事项</strong><p>团队周报已生成，但没有匹配到该成员的责任人字段。</p></div>';
+    const selfCheck = data.selfCheck || {};
+    const distribution = Object.entries(selfCheck.byTable || {}).map(([label, count]) => `${label} ${count}`).join("、") || "本周无";
+    const checkRows = [
+      ["本周填报条数", `${selfCheck.itemCount || 0} 条；${distribution}`],
+      ["应更新未更新", (selfCheck.missingUpdates || []).join("、") || "全部已更新"],
+      ["逾期未处理待办", (selfCheck.overdueTodos || []).join("、") || "无"],
+      ["下周到期节点", (selfCheck.nextMilestones || []).join("；") || "无"],
+    ];
+    $("#personalSelfCheck").innerHTML = `<table><tbody>${checkRows.map(([label, value]) => `<tr><th>${escapeHtml(label)}</th><td>${escapeHtml(value)}</td></tr>`).join("")}</tbody></table>`;
   };
 
   const loadPersonalReport = async (reportId = Number($("#personalReportPeriod").value || personalContext?.selectedReportId || 0), userId = activePersonalUserId) => {
     if (!reportId) {
       renderPersonalMembers();
-      $("#personalCharts").innerHTML = '<div class="panel personal-chart-card"><div class="empty-state"><strong>暂无图表</strong><p>请先生成综合版周报。</p></div></div>';
-      $("#personalCategories").innerHTML = '<div class="empty-state"><strong>暂无综合周报</strong><p>请先在周报展示中生成综合版周报。</p></div>';
+      $("#personalTables").innerHTML = '<div class="empty-state"><strong>暂无综合周报</strong><p>请先在周报展示中生成综合版周报。</p></div>';
+      $("#personalSelfCheck").innerHTML = '<p class="muted">暂无自检数据。</p>';
       return null;
     }
     const params = new URLSearchParams();
@@ -427,16 +426,19 @@
 
   const personalItemKey = (item) => String(item.recordId || item.id || "").trim();
   const currentPersonalEditPayload = () => {
-    const categoryDigests = Object.fromEntries($$("[data-personal-category-key]", $("#personalEditCategories")).map((row) => [row.dataset.personalCategoryKey, $("textarea", row).value.trim()]));
     const itemOverrides = Object.fromEntries($$("[data-personal-item-key]", $("#personalEditItems")).map((row) => {
-      const values = {};
-      $$('[data-personal-item-field]', row).forEach((input) => { values[input.dataset.personalItemField] = input.value.trim(); });
-      return [row.dataset.personalItemKey, values];
-    }));
+      const displayFields = {};
+      $$('[data-personal-display-field]', row).forEach((input) => {
+        if (input.value.trim() !== String(input.dataset.sourceValue || "").trim()) {
+          displayFields[input.dataset.personalDisplayField] = input.value.trim();
+        }
+      });
+      return [row.dataset.personalItemKey, {displayFields}];
+    }).filter(([, value]) => Object.keys(value.displayFields).length));
     return {
       userId: activePersonalReport?.person?.userId || activePersonalUserId,
       summary: $("#personalEditSummary").value.trim(),
-      categoryDigests,
+      categoryDigests: {},
       itemOverrides,
     };
   };
@@ -455,13 +457,20 @@
     $("#personalEditTitle").textContent = `编辑${person.name || "成员"}的个人周报`;
     $("#personalEditMeta").textContent = `${data.window?.label || data.periodKey || ""} · 团队周报 v${data.version || 0}`;
     $("#personalEditSummary").value = data.summary || "";
-    $("#personalEditCategories").innerHTML = (data.categorySections || []).map((section) => `<label data-personal-category-key="${escapeHtml(section.key || "")}"><span><strong>${escapeHtml(section.label || "未分类")}</strong><small>${section.itemCount || 0} 项</small></span><textarea maxlength="12000">${escapeHtml(section.digest || section.content || "")}</textarea></label>`).join("") || '<p class="muted">当前没有可编辑分类。</p>';
-    $("#personalEditItems").innerHTML = (data.items || []).map((item, index) => {
-      const itemKey = personalItemKey(item);
-      const tb = item.teambitionProject || null;
-      const tbMeta = tb ? [tb.statusName, tb.statusDegreeLabel, tb.progressPercent != null ? `进度 ${tb.progressPercent}%` : ""].filter(Boolean).join(" · ") : "";
-      return `<details class="personal-item-editor" data-personal-item-key="${escapeHtml(itemKey)}" ${index < 2 ? "open" : ""}><summary><span><strong>${escapeHtml(item.title || "未命名事项")}</strong><small>${escapeHtml(item.category || "未分类")} · ${escapeHtml(item.status || "未标记")}</small></span><em>展开编辑</em></summary><div class="personal-item-editor-grid"><label class="full-span">事项标题<input data-personal-item-field="title" maxlength="12000" value="${escapeHtml(item.title || "")}"></label><label>状态<input data-personal-item-field="status" maxlength="12000" value="${escapeHtml(item.status || "")}"></label><label>优先级<input data-personal-item-field="priority" maxlength="12000" value="${escapeHtml(item.priority || "")}"></label><label class="full-span">本周进展<textarea data-personal-item-field="progressText" maxlength="12000">${escapeHtml(item.progressText || "")}</textarea></label><label class="full-span">下周计划<textarea data-personal-item-field="planText" maxlength="12000">${escapeHtml(item.planText || "")}</textarea></label><label class="full-span">风险与问题<textarea data-personal-item-field="riskText" maxlength="12000">${escapeHtml(item.riskText || "")}</textarea></label>${tb ? `<div class="personal-tb-readonly full-span"><strong>TB项目状态（只读）</strong><span>${escapeHtml(tbMeta || "已关联TB重点项目")}</span><p>${escapeHtml(tb.statusSummary || tb.statusContent || "暂无状态正文")}</p></div>` : ""}</div></details>`;
-    }).join("") || '<p class="muted">当前没有可编辑事项。</p>';
+    $("#personalEditItems").innerHTML = (data.tables || []).map((table) => `<section class="personal-edit-table"><h3>${escapeHtml(table.label)}</h3>${(table.rows || []).map((row, index) => {
+      const titleKey = table.columns?.[0]?.key;
+      const title = row.values?.[titleKey] || `第 ${index + 1} 条`;
+      return `<details class="personal-item-editor" data-personal-item-key="${escapeHtml(row.recordId)}" ${index === 0 ? "open" : ""}><summary><span><strong>${escapeHtml(title)}</strong><small>${escapeHtml(table.label)}</small></span><em>展开编辑</em></summary><div class="personal-item-editor-grid">${(table.columns || []).map((column) => {
+        const value = row.values?.[column.key] || "";
+        const source = row.sourceValues?.[column.key] || "";
+        if (column.readOnly) return `<div class="personal-tb-readonly"><strong>${escapeHtml(column.label)}（只读）</strong><span>${escapeHtml(value || "—")}</span></div>`;
+        const multiline = String(value).length > 60 || ["content", "progress", "plan", "remark"].includes(column.key);
+        const field = multiline
+          ? `<textarea data-personal-display-field="${escapeHtml(column.key)}" data-source-value="${escapeHtml(source)}" maxlength="12000">${escapeHtml(value)}</textarea>`
+          : `<input data-personal-display-field="${escapeHtml(column.key)}" data-source-value="${escapeHtml(source)}" maxlength="12000" value="${escapeHtml(value)}">`;
+        return `<label class="${multiline ? "full-span" : ""}"><span>${escapeHtml(column.label)} <button class="link-button" data-reset-personal-field type="button">恢复源值</button></span>${field}</label>`;
+      }).join("")}${row.teambitionProject ? `<div class="personal-tb-readonly full-span"><strong>TB 项目状态（官方来源，只读）</strong><span>${escapeHtml(row.teambitionProject.statusName || "已关联")}</span><p>${escapeHtml(row.teambitionProject.statusSummary || row.teambitionProject.statusContent || "暂无状态正文")}</p></div>` : ""}</div></details>`;
+    }).join("") || '<p class="muted">本周无</p>'}</section>`).join("") || '<p class="muted">当前没有可编辑事项。</p>';
     personalIsDirty = false;
     personalOriginalEdit = JSON.stringify(currentPersonalEditPayload());
     $("#savePersonalEdit").disabled = true;
@@ -630,6 +639,7 @@
     });
     $$('textarea, input', $("#reportCategorySections")).forEach((input) => { input.disabled = !enabled; });
     $$('textarea, input', $("#reportSources")).forEach((input) => { input.disabled = !enabled; });
+    $$("textarea", $("#reportBoardFields")).forEach((input) => { input.disabled = !enabled; });
     $("#saveSections").disabled = !enabled || !reportIsDirty;
   };
 
@@ -720,9 +730,24 @@
     reportIsDirty = false;
     $("#reportSourceDetails").open = false;
     $("#reportDialogTitle").textContent = `#${id} ${report.title}`;
-    $("#reportDialogMeta").textContent = `${report.window?.label || report.periodKey} · ${KIND_LABELS[report.reportKind] || report.reportKind} · v${report.version} · ${statusLabel(report.workflowState)} · 归档 ${report.archive?.status || "未执行"}${report.archive?.error ? `（${report.archive.error}）` : ""}`;
+    const classificationCount = (report.classificationIssues || report.sections?.classificationIssues || []).length;
+    $("#reportDialogMeta").textContent = `${report.window?.label || report.periodKey} · ${KIND_LABELS[report.reportKind] || report.reportKind} · v${report.version} · ${statusLabel(report.workflowState)}${classificationCount ? ` · 待归类 ${classificationCount} 条（最终发送已阻断）` : ""} · 归档 ${report.archive?.status || "未执行"}${report.archive?.error ? `（${report.archive.error}）` : ""}`;
     $("#reportEditTitle").value = report.title || "";
     SECTION_KEYS.forEach((key) => setValue(`#section-${key}`, report.sections?.[key] || ""));
+    const boards = report.sections?.boardSections || {};
+    const hasBoards = Object.keys(boards).length > 0;
+    $("#reportBoardEditor").hidden = !hasBoards;
+    $("#reportLegacySections").hidden = false;
+    $$("label", $("#reportLegacySections")).forEach((label, index) => {
+      label.hidden = hasBoards && index > 0;
+    });
+    $("#reportCategorySections").closest("section").hidden = hasBoards;
+    activeReportBoard = "domestic";
+    $("#reportBoardTabs").innerHTML = hasBoards ? Object.entries(BOARD_LABELS).map(([key, label]) => `<button type="button" data-report-board-tab="${key}" class="${key === activeReportBoard ? "active" : ""}">${escapeHtml(label)}</button>`).join("") : "";
+    $("#reportBoardFields").innerHTML = hasBoards ? Object.entries(BOARD_LABELS).map(([boardKey, label]) => {
+      const values = boards[boardKey]?.sections || {};
+      return `<div data-report-board-pane="${boardKey}" class="board-editor-pane" ${boardKey === activeReportBoard ? "" : "hidden"}><h3>${escapeHtml(label)}</h3>${BOARD_SECTION_KEYS.map(([key, sectionLabel]) => `<label class="${["weeklyHighlights", "nextMilestones"].includes(key) ? "full-span" : ""}">${escapeHtml(sectionLabel)}<textarea data-report-board-field="${key}" maxlength="20000">${escapeHtml(values[key] || "")}</textarea></label>`).join("")}</div>`;
+    }).join("") : "";
     $("#saveSections").disabled = true;
     $("#reportDirtyHint").textContent = "保存后生成新的最新综合版，周日 20:00 将自动发送该版。";
     $("#reportDirtyHint").className = "";
@@ -746,6 +771,9 @@
     title: $("#reportEditTitle").value.trim(),
     sections: {
       ...Object.fromEntries(SECTION_KEYS.map((key) => [key, $(`#section-${key}`).value.trim()])),
+      boardSections: Object.fromEntries($$("[data-report-board-pane]", $("#reportBoardFields")).map((pane) => [pane.dataset.reportBoardPane, {
+        sections: Object.fromEntries($$("[data-report-board-field]", pane).map((input) => [input.dataset.reportBoardField, input.value.trim()])),
+      }])),
       categorySections: $$("[data-report-category-key]", $("#reportCategorySections")).map((row) => ({
         key: row.dataset.reportCategoryKey,
         digest: $("textarea", row).value.trim(),
@@ -764,6 +792,14 @@
     SECTION_KEYS.forEach((key) => {
       if (current.sections[key] !== original.sections?.[key]) sections[key] = current.sections[key];
     });
+    const boardSections = {};
+    Object.entries(current.sections.boardSections || {}).forEach(([boardKey, payload]) => {
+      const changes = Object.fromEntries(
+        Object.entries(payload.sections || {}).filter(([key, value]) => value !== original.sections?.boardSections?.[boardKey]?.sections?.[key])
+      );
+      if (Object.keys(changes).length) boardSections[boardKey] = {sections: changes};
+    });
+    if (Object.keys(boardSections).length) sections.boardSections = boardSections;
     const originalCategories = Object.fromEntries(
       (original.sections?.categorySections || []).map((item) => [item.key, item.digest])
     );
@@ -884,7 +920,6 @@
     setChecked("#autoPreviewEnabled", workflowConfig.autoPreviewEnabled);
     setChecked("#requireApproval", workflowConfig.requireApproval !== false);
     setChecked("#requirePreviewBeforeFormal", workflowConfig.requirePreviewBeforeFormal !== false);
-    setChecked("#sendGroupImages", workflowConfig.sendGroupImages !== false);
     renderConfigCollections();
     if (updateEditor) setValue("#configEditor", JSON.stringify(workflowConfig, null, 2));
   };
@@ -924,7 +959,7 @@
       autoPreviewEnabled: $("#autoPreviewEnabled").checked,
       requireApproval: $("#requireApproval").checked,
       requirePreviewBeforeFormal: $("#requirePreviewBeforeFormal").checked,
-      sendGroupImages: $("#sendGroupImages").checked,
+      sendGroupImages: false,
       autoFormalSendEnabled: true,
     };
     try { workflowConfig.archiveFieldMap = JSON.parse($("#archiveFieldMap").value || "{}"); }
@@ -1281,6 +1316,22 @@
   }, {refresh: false}));
 
   document.addEventListener("click", (event) => {
+    const reportBoardTab = event.target.closest("[data-report-board-tab]");
+    if (reportBoardTab) {
+      activeReportBoard = reportBoardTab.dataset.reportBoardTab;
+      $$("[data-report-board-tab]", $("#reportBoardTabs")).forEach((button) => button.classList.toggle("active", button === reportBoardTab));
+      $$("[data-report-board-pane]", $("#reportBoardFields")).forEach((pane) => { pane.hidden = pane.dataset.reportBoardPane !== activeReportBoard; });
+      return;
+    }
+    const resetPersonalField = event.target.closest("[data-reset-personal-field]");
+    if (resetPersonalField) {
+      const input = resetPersonalField.closest("label")?.querySelector("[data-personal-display-field]");
+      if (input) {
+        input.value = input.dataset.sourceValue || "";
+        updatePersonalDirtyState();
+      }
+      return;
+    }
     if (event.target.closest("[data-start-login]")) {
       if (ssoConfigured) beginSsoLogin();
       else {
