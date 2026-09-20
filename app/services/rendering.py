@@ -111,6 +111,7 @@ def report_html(
             '</tr>'
             for item in board_sources
         )
+        board_rows_html = board_rows or '<tr><td colspan="5" class="empty">本周无</td></tr>'
         cards = (
             ("一、本周要事", "weeklyHighlights", ""),
             ("二、拜访交流", "visits", ""),
@@ -138,7 +139,7 @@ def report_html(
             + '</section>'
             '<details class="card table-card fact-details"><summary><h2>本板块事实清单</h2><span aria-hidden="true"></span></summary>'
             '<div class="fact-table-wrap"><table><thead><tr><th>类别</th><th>事项</th><th>状态</th><th>负责人</th><th>截止</th></tr></thead>'
-            f'<tbody>{board_rows or "<tr><td colspan=\"5\" class=\"empty\">本周无</td></tr>"}</tbody></table></div></details>'
+            f'<tbody>{board_rows_html}</tbody></table></div></details>'
             '</section>'
         )
 
