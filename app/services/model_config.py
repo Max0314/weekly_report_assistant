@@ -29,6 +29,20 @@ PROVIDERS = [
         "defaultModels": ["openai/gpt-5.4-mini", "z-ai/glm-5.2", "openai/gpt-5-mini"],
     },
     {
+        "value": "neoflow",
+        "label": "NeoFlow",
+        "description": "NeoFlow 应用模型网关；使用应用独立的静态 API Key 和实时模型目录。",
+        "defaultApiBase": "https://neoflow.neo-net.com/api/v1",
+        "defaultModel": "openai/gpt-5.6-terra",
+        "defaultModels": [
+            "openai/gpt-5.6-terra",
+            "openai/gpt-5.6-sol",
+            "openai/gpt-5.6-luna",
+            "z-ai/glm-5.2",
+            "qwen/qwen3.7-plus",
+        ],
+    },
+    {
         "value": "qwen",
         "label": "DashScope / Qwen",
         "description": "阿里云百炼 OpenAI 兼容接口，自动关闭 Qwen thinking。",
@@ -72,6 +86,8 @@ def _infer_provider(provider: Any, api_base: Any, model_name: Any) -> str:
         return explicit
     normalized_base = _text(api_base).lower()
     identity = _model_identity(model_name)
+    if "neoflow.neo-net.com" in normalized_base:
+        return "neoflow"
     if "openrouter.ai" in normalized_base:
         return "openrouter"
     if "dashscope" in normalized_base or identity.startswith("qwen"):
@@ -118,6 +134,8 @@ def build_chat_payload(
     if provider == "openrouter" and normalized_model == "z-ai/glm-5.2":
         payload["reasoning"] = {"enabled": False, "exclude": True}
     elif provider == "openrouter" and identity.startswith("gpt-5.4"):
+        payload["reasoning"] = {"effort": "none", "exclude": True}
+    elif provider == "neoflow" and identity.startswith("gpt-5.6"):
         payload["reasoning"] = {"effort": "none", "exclude": True}
     return payload
 
@@ -225,6 +243,7 @@ class ModelConfigService:
             "compatibility": {
                 "qwen": "Qwen 使用 max_tokens，并自动关闭 enable_thinking。",
                 "openrouter": "OpenRouter GPT-5.4/GLM 结构化任务关闭额外 reasoning。",
+                "neoflow": "NeoFlow 使用应用独立静态 API Key；GPT-5.6 结构化任务关闭额外 reasoning。",
                 "secret": "API Key 只保存在服务端，读取接口始终脱敏。",
             },
         }

@@ -7,7 +7,7 @@ from unittest.mock import patch
 
 from app.config import Settings
 from app.db import Database
-from app.services.model_config import ModelConfigService
+from app.services.model_config import ModelConfigService, build_chat_payload
 
 
 class ModelConfigTests(unittest.TestCase):
@@ -69,6 +69,34 @@ class ModelConfigTests(unittest.TestCase):
         self.assertNotIn("apiKey", result)
         self.assertTrue(result["ok"])
         self.assertTrue(self.service.test_status()["ok"])
+
+    def test_neoflow_provider_uses_prefixed_model_and_disables_reasoning(self) -> None:
+        resolved = self.service.resolve(
+            {
+                "provider": "",
+                "apiBase": "https://neoflow.neo-net.com/api/v1/chat/completions",
+                "modelName": "openai/gpt-5.6-terra",
+                "apiKey": "nfak_test",
+            }
+        )
+        self.assertEqual("neoflow", resolved["provider"])
+        self.assertEqual("https://neoflow.neo-net.com/api/v1", resolved["apiBase"])
+
+        sent = build_chat_payload(
+            resolved,
+            messages=[{"role": "user", "content": "Return JSON."}],
+            max_tokens=80,
+            temperature=0,
+        )
+        self.assertEqual("openai/gpt-5.6-terra", sent["model"])
+        self.assertEqual({"effort": "none", "exclude": True}, sent["reasoning"])
+        self.assertIn("max_tokens", sent)
+        self.assertNotIn("max_completion_tokens", sent)
+        self.assertNotIn("temperature", sent)
+
+        public = self.service.get()
+        providers = {item["value"]: item for item in public["providers"]}
+        self.assertEqual("openai/gpt-5.6-terra", providers["neoflow"]["defaultModel"])
 
     def test_failed_connection_is_persisted_without_the_api_key(self) -> None:
         from app.integrations.http_json import JsonHttpError

@@ -73,7 +73,7 @@ copy .env.example .env
 
 个人编辑覆盖写入独立的 `weekly_report_personal_edit` 表；保存时会复制到新综合版修订。群目标必须以 `openConversationId + robotCode` 成对配置，预览和正式群不得复用同一会话 ID；周六最终版接收人必须恰好一名。机器人群发接口未提供可核验的逐人 @ 合同，因此周六测试消息使用明确文字提醒，不声称已 @ 任何人。
 
-AI 模型配置是可选项；`AI_PROVIDER` 标记供应商，`AI_BASE_URL`、`AI_API_KEY`、`AI_MODEL` 三项齐全时调用 OpenAI-compatible Chat Completions，否则使用确定性模板并在周报中标记 `fallback/deterministic`。管理页提供与 `bi_center` 一致的 Provider、API Base、模型名、API Key 脱敏、连接测试、保存和恢复部署配置能力；页面保存的是本服务独立覆盖，不会反向修改 `bi_center`。
+AI 模型配置是可选项；`AI_PROVIDER` 标记供应商，`AI_BASE_URL`、`AI_API_KEY`、`AI_MODEL` 三项齐全时调用 OpenAI-compatible Chat Completions，否则使用确定性模板并在周报中标记 `fallback/deterministic`。NeoFlow 使用 `https://neoflow.neo-net.com/api/v1`、带厂商前缀的模型 ID 和应用独立的 `nfak_` 静态 API Key；Application Access Key 不用于模型直连。管理页提供与 `bi_center` 一致的 Provider、API Base、模型名、API Key 脱敏、连接测试、保存和恢复部署配置能力；页面保存的是本服务独立覆盖，不会反向修改 `bi_center`。
 
 ## TB 工作看板
 
