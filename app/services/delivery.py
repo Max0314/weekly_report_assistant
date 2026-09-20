@@ -67,6 +67,9 @@ class DeliveryService:
                     "",
                     f"**周期**：{(report.get('window') or {}).get('label') or report.get('periodKey')}",
                     f"**版本**：v{report.get('version')}",
+                    "",
+                    f"- 风险：**{int(metrics.get('riskCount') or 0)}** 项 ｜ "
+                    f"逾期：**{int(metrics.get('overdueCount') or 0)}** 项",
                 ]
             )
 

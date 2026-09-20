@@ -741,6 +741,8 @@ class ReportsAndDeliveryTests(unittest.TestCase):
         self.assertIn("产品与项目管理周报", preview_param["text"])
         self.assertIn("周期", preview_param["text"])
         self.assertIn("版本", preview_param["text"])
+        self.assertIn("风险：**0** 项", preview_param["text"])
+        self.assertIn("逾期：**0** 项", preview_param["text"])
         self.assertNotIn("国内", preview_param["text"])
         self.assertNotIn("纳入事项", preview_param["text"])
         self.assertNotIn("核查提醒", preview_param["text"])
