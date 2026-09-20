@@ -5,10 +5,30 @@ import unittest
 from unittest.mock import patch
 
 from app.config import Settings
-from app.services.ai_summary import AISummaryClient, SECTION_KEYS
+from app.services.ai_summary import AISummaryClient, BOARD_SECTION_KEYS, SECTION_KEYS
 
 
 class AISummaryTests(unittest.TestCase):
+    def test_board_summary_caps_ai_risk_radar_at_five_lines(self) -> None:
+        config = Settings(
+            _env_file=None,
+            ai_base_url="https://ai.example/v1",
+            ai_api_key="token",
+            ai_model="model",
+        )
+        ai_result = {key: "内容" for key in BOARD_SECTION_KEYS}
+        ai_result["riskRadar"] = "\n".join(f"- 风险{index}" for index in range(7))
+        response = {"choices": [{"message": {"content": json.dumps(ai_result, ensure_ascii=False)}}]}
+
+        with patch("app.services.ai_summary.request_json", return_value=response) as request:
+            result = AISummaryClient(config).summarize_board(
+                board_label="国内", window={}, metrics={}, items=[{"title": "事项"}], fallback={}
+            )
+
+        self.assertEqual(5, len(result["riskRadar"].splitlines()))
+        prompt = json.loads(request.call_args.kwargs["payload"]["messages"][1]["content"])
+        self.assertTrue(any("最多输出 5 条" in rule for rule in prompt["rules"]))
+
     def test_prompt_is_bounded_risk_first_and_excludes_names_by_default(self) -> None:
         config = Settings(
             _env_file=None,

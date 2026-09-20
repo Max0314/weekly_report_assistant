@@ -103,6 +103,11 @@ def _compact(value: Any, limit: int = 120) -> str:
     return text if len(text) <= limit else f"{text[: limit - 1].rstrip()}…"
 
 
+def _section_entry_count(value: Any) -> int:
+    """Count editor-visible summary entries without interpreting wrapped prose."""
+    return len([line for line in str(value or "").splitlines() if line.strip()])
+
+
 def _normalized_digest(value: Any, *, limit: int = 5) -> str:
     if isinstance(value, list):
         raw_lines = [str(item or "") for item in value]
@@ -475,6 +480,23 @@ class ReportService:
                 if normalized and department:
                     result[normalized] = department
         return result
+
+    def _product_manager_user_ids(self) -> set[str]:
+        """Return every active user listed in the authoritative PM roster."""
+        if not ROSTER_TABLE_IDS:
+            return set()
+        placeholders = ",".join("?" for _ in ROSTER_TABLE_IDS)
+        rows = self.db.fetch_all(
+            f"SELECT product_manager_user_ids_json FROM source_record "
+            f"WHERE is_deleted=0 AND table_id IN ({placeholders})",
+            tuple(sorted(ROSTER_TABLE_IDS)),
+        )
+        return {
+            str(user_id or "").strip()
+            for row in rows
+            for user_id in _json(row.get("product_manager_user_ids_json"), [])
+            if str(user_id or "").strip()
+        }
 
     @staticmethod
     def _assign_business_board(item: dict[str, Any], departments: dict[str, str]) -> dict[str, Any]:
@@ -1112,7 +1134,16 @@ class ReportService:
             ),
         )
         visits = [item for item in items if item.get("categoryKey") == "customer_visit"]
-        risks = [item for item in items if item.get("riskText") or item.get("overdue")]
+        risks = sorted(
+            [item for item in items if item.get("riskText") or item.get("overdue")],
+            key=lambda item: (
+                not bool(item.get("overdue")),
+                not bool(item.get("riskText")),
+                not (item.get("priority") in {"高", "紧急"}),
+                str(item.get("dueAt") or "9999"),
+                str(item.get("recordId") or item.get("id") or ""),
+            ),
+        )
         product = [
             item for item in items
             if item.get("categoryKey") in {"product_research", "product_management"}
@@ -1129,7 +1160,7 @@ class ReportService:
         return {
             "weeklyHighlights": _lines([line(item, include_plan=True) for item in ranked[:4]], limit=4),
             "visits": _lines([visit_header, *[line(item, include_plan=True) for item in visits]], limit=8),
-            "riskRadar": _lines([line(item, include_plan=True) for item in risks], limit=10),
+            "riskRadar": _lines([line(item, include_plan=True) for item in risks], limit=5),
             "productManagement": _lines([line(item, include_plan=True) for item in product], limit=12),
             "marketInfo": _lines(
                 [market_header, *[line(item, include_plan=True) for item in market],
@@ -1443,6 +1474,8 @@ class ReportService:
         normalized_user_id = str(user_id or "").strip()
         if not normalized_user_id:
             raise ValueError("personal report user is required")
+        if normalized_user_id not in self._product_manager_user_ids():
+            raise ValueError("personal reports are only available to users in the product-manager roster")
         edit_row = self.db.fetch_one(
             "SELECT * FROM weekly_report_personal_edit WHERE report_id=? AND user_id=?",
             (int(report_id), normalized_user_id),
@@ -1734,6 +1767,7 @@ class ReportService:
 
     def personal_members(self, report_id: int) -> list[dict[str, Any]]:
         report = self.get(report_id, include_sources=True)
+        product_manager_user_ids = self._product_manager_user_ids()
         members: dict[str, dict[str, Any]] = {}
         for source in report.get("sources") or []:
             if source.get("personalEligible") is False:
@@ -1743,7 +1777,7 @@ class ReportService:
                 if not isinstance(entry, dict):
                     continue
                 user_id = str(entry.get("userId") or "").strip()
-                if not user_id:
+                if not user_id or user_id not in product_manager_user_ids:
                     continue
                 member = members.setdefault(
                     user_id,
@@ -1875,6 +1909,8 @@ class ReportService:
                 if not isinstance(incoming, dict):
                     continue
                 incoming_values = incoming.get("sections") if isinstance(incoming.get("sections"), dict) else incoming
+                if "riskRadar" in incoming_values and _section_entry_count(incoming_values.get("riskRadar")) > 5:
+                    raise ValueError(f"{label}的风险雷达最多保留 5 条")
                 current = current_boards.get(board_key) if isinstance(current_boards.get(board_key), dict) else {
                     "key": board_key, "label": label, "sections": {}
                 }

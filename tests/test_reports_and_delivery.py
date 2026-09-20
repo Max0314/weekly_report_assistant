@@ -231,6 +231,7 @@ class ReportsAndDeliveryTests(unittest.TestCase):
             delivery.saturday_final(report["id"], schedule_key="week-20260810-sat17")
 
     def test_personal_tables_keep_source_text_blank_stale_weekly_fields_and_allow_field_override(self) -> None:
+        self.seed_roster("u1", "产品甲", "中国区经营中心")
         self.db.execute(
             """
             INSERT INTO source_record(
@@ -286,6 +287,8 @@ class ReportsAndDeliveryTests(unittest.TestCase):
         self.assertEqual("deterministic", report["aiStatus"])
 
     def test_personal_report_filters_frozen_snapshot_and_preserves_roles(self) -> None:
+        self.seed_roster("u1", "产品甲", "中国区经营中心")
+        self.seed_roster("u2", "产品乙", "物联网事业部", "pm-2")
         common = (
             "'base','dEOVLJG','拜访交流记录',?,?,?,?,?,?,?,'[]','[]','[]','[]',?,"
             "'2026-08-12T09:00:00+08:00','2026-08-12T09:00:00+08:00',"
@@ -338,6 +341,53 @@ class ReportsAndDeliveryTests(unittest.TestCase):
         self.assertEqual(["产品经理", "协同负责人"], personal["items"][0]["roles"])
         self.assertEqual("客户拜访与交流", personal["categorySections"][0]["label"])
 
+    def test_personal_members_only_include_product_manager_roster(self) -> None:
+        self.seed_roster("u1", "产品甲", "中国区经营中心")
+        self.db.execute(
+            """
+            INSERT INTO source_record(
+              base_id,table_id,table_name,record_id,category,title,status,
+              product_manager_user_ids_json,product_manager_names_json,assignees_json,
+              event_at,first_seen_at,last_seen_at,changed_at,record_hash,raw_json
+            ) VALUES ('base','PoYFuV8','产品管理事项','owner-only','产品管理','负责人事项','进行中',
+              '["u1"]','["产品甲"]',?,
+              '2026-08-12T09:00:00+08:00','2026-08-12T09:00:00+08:00',
+              '2026-08-12T09:00:00+08:00','2026-08-12T09:00:00+08:00','hash-owner','{}')
+            """,
+            ('[{"userId":"u1","name":"产品甲","role":"产品经理"},'
+             '{"userId":"u-owner","name":"刘峰","role":"负责人"}]',),
+        )
+        report = self.reports.generate(period_key="week:20260810", use_ai=False)
+
+        members = self.reports.personal_members(report["id"])
+
+        self.assertEqual(["u1"], [item["userId"] for item in members])
+        self.assertIn("负责人事项", [item["title"] for item in report["sources"]])
+        with self.assertRaisesRegex(ValueError, "product-manager roster"):
+            self.reports.personal(report["id"], user_id="u-owner", name="刘峰")
+
+    def test_board_risk_radar_is_limited_to_five_and_prioritizes_overdue(self) -> None:
+        items = [
+            {
+                "recordId": f"risk-{index}",
+                "title": f"风险{index}",
+                "progressText": "跟进中",
+                "riskText": "存在风险",
+                "overdue": index == 6,
+                "priority": "高" if index == 5 else "普通",
+                "dueAt": f"2026-08-{20 + index:02d}",
+                "categoryKey": "key_project",
+            }
+            for index in range(7)
+        ]
+
+        risk_radar = self.reports._draft_board_sections(items)["riskRadar"]
+        lines = risk_radar.splitlines()
+
+        self.assertEqual(5, len(lines))
+        self.assertIn("风险6", lines[0])
+        self.assertIn("风险5", lines[1])
+
     def test_report_preserves_fact_snapshot_after_source_changes(self) -> None:
         self.seed_source()
         report = self.reports.generate(period_key="week:20260810", use_ai=False)
@@ -348,6 +398,7 @@ class ReportsAndDeliveryTests(unittest.TestCase):
 
     def test_team_and_personal_edits_persist_all_supported_fields_and_reset_review(self) -> None:
         self.seed_source()
+        self.seed_roster("u1", "产品甲", "中国区经营中心")
         report = self.reports.generate(period_key="week:20260810", use_ai=False)
         report_id = report["id"]
         self.db.execute(
@@ -457,6 +508,8 @@ class ReportsAndDeliveryTests(unittest.TestCase):
 
     def test_stale_personal_edits_rebase_on_latest_revision_and_preserve_other_users(self) -> None:
         self.seed_source()
+        self.seed_roster("u1", "产品甲", "中国区经营中心")
+        self.seed_roster("u2", "产品乙", "物联网事业部", "pm-2")
         self.db.execute(
             """
             UPDATE source_record
@@ -538,6 +591,7 @@ class ReportsAndDeliveryTests(unittest.TestCase):
 
     def test_deferred_generation_reapplies_team_patch_and_preserves_personal_report(self) -> None:
         self.seed_source()
+        self.seed_roster("u1", "产品甲", "中国区经营中心")
         report = self.reports.generate(period_key="week:20260810", use_ai=False)
         lease = self.reports.team_editing.acquire(
             report["id"], actor="dingtalk:editor", owner_name="团队编辑"
@@ -684,6 +738,12 @@ class ReportsAndDeliveryTests(unittest.TestCase):
         )
         self.assertNotIn("btns", preview_param)
         self.assertNotIn("singleTitle", preview_param)
+        self.assertIn("产品与项目管理周报", preview_param["text"])
+        self.assertIn("周期", preview_param["text"])
+        self.assertIn("版本", preview_param["text"])
+        self.assertNotIn("国内", preview_param["text"])
+        self.assertNotIn("纳入事项", preview_param["text"])
+        self.assertNotIn("核查提醒", preview_param["text"])
         first = delivery.formal(report["id"])
         second = delivery.formal(report["id"])
         self.assertEqual(1, first["sent"])

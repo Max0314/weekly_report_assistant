@@ -54,11 +54,21 @@ class DeliveryService:
             return {"status": "error", "skipped": False, "recordId": "", "error": str(exc)}
 
     @staticmethod
-    def _markdown(report: dict[str, Any], *, preview: bool) -> str:
+    def _markdown(report: dict[str, Any], *, preview: bool, compact_card: bool = False) -> str:
         sections = report.get("sections") or {}
         metrics = report.get("metrics") or {}
         by_status = metrics.get("byStatus") or {}
         prefix = "【预览】" if preview else ""
+
+        if compact_card:
+            return "\n".join(
+                [
+                    f"### {prefix}{report.get('title') or '产品与项目管理周报'}",
+                    "",
+                    f"**周期**：{(report.get('window') or {}).get('label') or report.get('periodKey')}",
+                    f"**版本**：v{report.get('version')}",
+                ]
+            )
 
         def compact(value: Any, limit: int = 160) -> str:
             text = re.sub(r"\s+", " ", str(value or "")).strip()
@@ -394,16 +404,7 @@ class DeliveryService:
                 "PUBLIC_BASE_URL and DingTalk SSO are required for personal report delivery"
             )
         message_is_preview = preview and not is_non_state_delivery
-        markdown = self._markdown(report, preview=message_is_preview)
         phase = non_state_phase or ("preview" if preview else "formal")
-        if phase.startswith("test-"):
-            # The group-send endpoint does not provide a verifiable per-user
-            # @ contract for this robot mode. Keep the reminder explicit and
-            # auditable instead of claiming that people were mentioned.
-            markdown = (
-                f"{markdown}\n\n---\n\n**核查提醒**：请相关负责人核对本版内容；"
-                "如需修改，请在周日 20:00 前保存；系统届时自动发送最新综合版。"
-            )
         results: list[dict[str, Any]] = []
         sent = 0
         failed = 0
@@ -420,6 +421,11 @@ class DeliveryService:
             elif claim == "pending":
                 raise DeliveryError(f"delivery is already in progress for {name}")
             else:
+                markdown = self._markdown(
+                    report,
+                    preview=message_is_preview,
+                    compact_card=target_type == "group",
+                )
                 msg_param: dict[str, Any] = {
                     "title": f"{'【预览】' if message_is_preview else ''}{report['title']}",
                     "text": markdown,

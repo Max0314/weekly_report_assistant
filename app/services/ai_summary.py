@@ -73,6 +73,8 @@ def _extract_board_json(text: str) -> dict[str, str]:
     if not isinstance(value, dict):
         raise AISummaryError("AI JSON must be an object")
     result = {key: str(value.get(key) or "").strip() for key in BOARD_SECTION_KEYS}
+    risk_lines = [line.strip() for line in result["riskRadar"].splitlines() if line.strip()]
+    result["riskRadar"] = "\n".join(risk_lines[:5])
     if not result["weeklyHighlights"]:
         raise AISummaryError("AI board summary is missing weeklyHighlights")
     return result
@@ -304,6 +306,7 @@ class AISummaryClient:
                 "六个字段分别对应本周要事、拜访交流、风险雷达、产品策划&管理、市场信息、下周关键节点",
                 "结论先行，只报事实、变化、影响与下一步，不新增事实或数字",
                 "市场招投标不得漏掉输入中的有效标案",
+                "风险雷达每条独占一行，按逾期、明确风险、高优先级和截止日期排序，最多输出 5 条",
                 "无事实写暂无，不评价个人绩效，不输出其他业务板块内容",
             ],
         }
