@@ -100,12 +100,24 @@ https://neoflow-cn.neo-net.com/weekly-assistant/api/auth/dingtalk/callback
 
 - `/api/health` 仅检查服务与 SQLite。
 - `/api/readiness` 需要有效钉钉管理会话或运维令牌，显示钉钉、AI 表、最近源表快照、bi_center、TB 重点项目状态、最近模型连接测试、回调鉴权、公开链接、个人/群目标、归档配置和人员缓存状态，不返回密钥。应用配置齐全但 AI 表或已启用的 TB 重点项目状态最近同步失败、无可用匹配或过期时，总体状态仍为未就绪。
-- `/api/model-config` 需要管理令牌，返回当前模型、来源与脱敏 Key；连接测试可使用未保存候选配置，留空 Key 时安全复用当前生效 Key。
+- `/api/model-config` 需要管理令牌，返回当前模型、来源与脱敏 Key；连接测试可使用未保存候选配置，留空 Key 时安全复用当前生效 Key。测试必须收到可解析且 `status=ok` 的 JSON；空回复、拒绝、截断和错误状态均记录为失败，HTTP 200 或空 `choices` 不算成功。连接测试不替代周报生成验收。
 - `/api/teambition/status`、`/api/teambition/dashboard`、`/api/teambition/key-project-statuses` 和 `POST /api/sync/teambition` 均需要管理令牌；重点项目状态接口以 AI 多维表当前未删除记录为主表左关联 TB，不会因历史 TB 缓存扩大项目范围。状态接口只返回来源、配置布尔值、数量和最近批次，不返回 App ID、Secret、组织 ID 或访问令牌。
 - `/api/coverage` 显示预期产品/项目经理与本周有效事项覆盖；`POST /api/coverage/remind` 仅在管理员确认后发送一次性缺报单聊。
 - `sync_run` 保存逐表同步结果；`teambition_sync_run` 保存 TB 批次及重点项目匹配摘要。AI 表最新同步失败/过期/空快照，或已启用的 TB 最新批次失败/过期时，自动生成和自动预览会被阻断；关闭自动同步不会绕过该门禁，只能手动刷新快照或明确关闭“补充重点项目状态”。
 - `job_status` 保存调度失败及重试次数；周日 20:00 自动正式发送不要求确认、审核或预览，但仍校验最新综合版、内容哈希、人员目录、公开链接和正式目标；机器人事件和推送日志只在管理接口可见。
 - 外部接口失败时不删除上一版快照；正式推送失败进入 `retryable_error`。
+
+## 隔离模型业务验收
+
+从已同步到 GitHub 提交的服务器仓库执行：
+
+```bash
+docker compose exec -T weekly-report-assistant python - < scripts/check_model_workflow.py
+```
+
+脚本只读取正式生效模型配置，在自动清理的临时 SQLite 中整理清晰标记的合成名单和两条标案，验证连接测试、国内/海外板块归类、编辑租约排队、后台生成、六章 JSON、草稿保存及新实例读取、内容哈希和队列不重复执行。三个真实模型请求串行执行；脚本限制 HTTP 出口为当前模型接口，不调用钉钉或上游数据接口，不写正式周报、审核、发送或任务状态。任一板块回退即失败，不以模板输出代替模型验收。
+
+这项验收仅覆盖模型与本服务业务链路；上游权限/同步需另外核对真实同步结果，消息出口未实发时必须明确说明。本次模型连接校验修复不涉及数据库结构、历史数据迁移或模型请求参数变更，回滚应用镜像即可。
 
 ## 数据库迁移
 

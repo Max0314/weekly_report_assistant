@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import time
 from typing import Any
 
@@ -300,9 +301,25 @@ class ModelConfigService:
         except JsonHttpError as exc:
             self._record_test(config, ok=False, error=str(exc))
             raise ModelConfigError(str(exc)) from exc
-        if not isinstance(response, dict) or not isinstance(response.get("choices"), list):
-            self._record_test(config, ok=False, error="模型返回格式不正确")
-            raise ModelConfigError("模型返回格式不正确")
+        choices = response.get("choices") if isinstance(response, dict) else None
+        choice = choices[0] if isinstance(choices, list) and choices and isinstance(choices[0], dict) else {}
+        message = choice.get("message") if isinstance(choice.get("message"), dict) else {}
+        content = message.get("content")
+        if isinstance(content, list):
+            content = "".join(item["text"] for item in content if isinstance(item, dict) and isinstance(item.get("text"), str))
+        try:
+            parsed = json.loads(content) if isinstance(content, str) else None
+        except json.JSONDecodeError:
+            parsed = None
+        if (
+            choice.get("finish_reason") not in (None, "stop")
+            or message.get("refusal")
+            or not isinstance(parsed, dict)
+            or parsed.get("status") != "ok"
+        ):
+            error = "模型未返回完整的预期 JSON（status=ok），请检查模型与输出限制"
+            self._record_test(config, ok=False, error=error)
+            raise ModelConfigError(error)
         self._record_test(config, ok=True)
         return {
             "ok": True,

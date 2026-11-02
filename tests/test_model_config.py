@@ -119,6 +119,31 @@ class ModelConfigTests(unittest.TestCase):
         self.assertFalse(status["ok"])
         self.assertNotIn("shared-production-secret", str(status))
 
+    def test_connection_test_rejects_unusable_completions(self) -> None:
+        responses = [
+            {"choices": []},
+            {"choices": [None]},
+            {"choices": [{"message": {"content": ""}}]},
+            {"choices": [{"message": {"content": "not JSON"}}]},
+            {"choices": [{"message": {"content": '{"status":"error"}'}}]},
+            {"choices": [{"message": {"content": '[]'}}]},
+            {"choices": [{"finish_reason": "length", "message": {"content": '{"status":"ok"}'}}]},
+            {"choices": [{"message": {"refusal": "refused", "content": '{"status":"ok"}'}}]},
+        ]
+        for response in responses:
+            with self.subTest(response=response):
+                with patch("app.services.model_config.request_json", return_value=response):
+                    with self.assertRaisesRegex(Exception, "模型未返回完整的预期 JSON"):
+                        self.service.test(self.service.inherited())
+                self.assertFalse(self.service.test_status()["ok"])
+
+    def test_connection_test_accepts_json_text_blocks(self) -> None:
+        response = {"choices": [{"finish_reason": "stop", "message": {
+            "content": [{"type": "text", "text": '{"status":"ok"}'}],
+        }}]}
+        with patch("app.services.model_config.request_json", return_value=response):
+            self.assertTrue(self.service.test(self.service.inherited())["ok"])
+
 
 if __name__ == "__main__":
     unittest.main()
